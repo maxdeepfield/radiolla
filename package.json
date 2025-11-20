@@ -1,0 +1,60 @@
+{
+  "name": "radiolla",
+  "version": "1.0.0",
+  "main": "index.ts",
+  "scripts": {
+    "start": "expo start",
+    "android": "expo start --android",
+    "ios": "expo start --ios",
+    "web": "expo start --web",
+    "electron": "concurrently \"cross-env EXPO_NO_WEB_BROWSER=1 expo start --web\" \"node electron/run-electron.js\"",
+    "web:export": "expo export --platform web --output-dir dist",
+    "electron:pack": "npm run web:export && cross-env NODE_ENV=production electron electron/main.js",
+    "electron:build": "npm run web:export && electron-builder --win --publish never"
+  },
+  "dependencies": {
+    "@react-native-async-storage/async-storage": "2.2.0",
+    "expo": "~54.0.25",
+    "expo-av": "~16.0.7",
+    "expo-notifications": "~0.32.13",
+    "expo-status-bar": "~3.0.8",
+    "react": "19.1.0",
+    "react-dom": "19.1.0",
+    "react-native": "0.81.5",
+    "react-native-web": "^0.21.0"
+  },
+  "devDependencies": {
+    "@types/react": "~19.1.0",
+    "concurrently": "^9.2.1",
+    "cross-env": "^10.1.0",
+    "electron": "^39.2.2",
+    "electron-builder": "^26.0.12",
+    "typescript": "~5.9.2",
+    "wait-on": "^9.0.3"
+  },
+  "build": {
+    "appId": "fm.radiolla.app",
+    "productName": "Radiolla",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "electron/**/*",
+      "package.json"
+    ],
+    "extraMetadata": {
+      "main": "electron/main.js"
+    },
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": "x64"
+        }
+      ],
+      "artifactName": "Radiolla-Setup-${version}-${arch}.${ext}"
+    }
+  },
+  "private": true
+}
