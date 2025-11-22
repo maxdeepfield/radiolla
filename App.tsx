@@ -3,6 +3,7 @@ import { StatusBar } from 'expo-status-bar';
 import {
   FlatList,
   KeyboardAvoidingView,
+  Modal,
   Platform,
   SafeAreaView,
   StyleSheet,
@@ -44,9 +45,12 @@ export default function App() {
   const [nameInput, setNameInput] = useState('');
   const [urlInput, setUrlInput] = useState('');
   const [currentStation, setCurrentStation] = useState<Station | null>(null);
+  const [lastStation, setLastStation] = useState<Station | null>(null);
   const [playbackState, setPlaybackState] = useState<'idle' | 'loading' | 'playing'>('idle');
   const [error, setError] = useState<string | null>(null);
+  const [formError, setFormError] = useState<string | null>(null);
   const [notificationsAllowed, setNotificationsAllowed] = useState(false);
+  const [showAddModal, setShowAddModal] = useState(false);
   const soundRef = useRef<Audio.Sound | null>(null);
   const playbackNotificationIdRef = useRef<string | null>(null);
   const responseListenerRef = useRef<Subscription | null>(null);
@@ -197,6 +201,8 @@ export default function App() {
   const playStation = async (station: Station) => {
     setError(null);
     setPlaybackState('loading');
+    setLastStation(station);
+    setCurrentStation(station);
     try {
       if (soundRef.current) {
         await soundRef.current.unloadAsync();
@@ -214,24 +220,24 @@ export default function App() {
         },
       );
       soundRef.current = sound;
-      setCurrentStation(station);
       setPlaybackState('playing');
       await showPlaybackNotification(station);
       await sendNotification('Now playing', station.name);
     } catch (err) {
       setPlaybackState('idle');
+      setCurrentStation(null);
       setError('Unable to play the stream. Check the URL and try again.');
     }
   };
 
   const handleAddStation = async () => {
-    setError(null);
+    setFormError(null);
     if (!nameInput.trim() || !urlInput.trim()) {
-      setError('Name and stream URL are required.');
+      setFormError('Name and stream URL are required.');
       return;
     }
     if (!/^https?:\/\//i.test(urlInput.trim())) {
-      setError('Stream URL should start with http or https.');
+      setFormError('Stream URL should start with http or https.');
       return;
     }
     const newStation: Station = {
@@ -243,6 +249,7 @@ export default function App() {
     await persistStations(next);
     setNameInput('');
     setUrlInput('');
+    setShowAddModal(false);
     sendNotification('Station added', newStation.name);
   };
 
@@ -250,15 +257,19 @@ export default function App() {
     const next = stations.filter((s) => s.id !== id);
     await persistStations(next);
     if (currentStation?.id === id) {
-      stopPlayback();
+      await stopPlayback();
+    }
+    if (lastStation?.id === id) {
+      setLastStation(null);
     }
   };
 
   const renderStation = ({ item }: { item: Station }) => {
     const isCurrent = currentStation?.id === item.id;
+    const isSelected = isCurrent || (!currentStation && lastStation?.id === item.id);
     const playing = isCurrent && playbackState === 'playing';
     return (
-      <View style={[styles.card, isCurrent && styles.activeCard]}>
+      <View style={[styles.card, isSelected && styles.activeCard]}>
         <View style={styles.cardHeader}>
           <Text style={styles.cardTitle}>{item.name}</Text>
           <Text style={styles.cardSubtitle} numberOfLines={1}>
@@ -280,52 +291,44 @@ export default function App() {
     );
   };
 
+  const openAddModal = () => {
+    setFormError(null);
+    setShowAddModal(true);
+  };
+
+  const handlePrimaryControl = () => {
+    const target = currentStation || lastStation;
+    if (!target) return;
+    if (playbackState === 'playing' || playbackState === 'loading') {
+      stopPlayback();
+    } else {
+      playStation(target);
+    }
+  };
+
+  const activeStation = currentStation || lastStation;
+  const statusLabel =
+    playbackState === 'loading'
+      ? 'Buffering...'
+      : playbackState === 'playing'
+        ? 'Streaming'
+        : activeStation
+          ? 'Stopped'
+          : 'Idle';
+
   return (
     <SafeAreaView style={styles.container}>
       <StatusBar style="dark" />
-      <KeyboardAvoidingView style={styles.inner} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+      <View style={styles.topBar}>
         <Text style={styles.heading}>Radiolla</Text>
-        <Text style={styles.subhead}>Manage stream URLs, play, pause, and get notifications.</Text>
+        <TouchableOpacity style={styles.iconButton} onPress={openAddModal}>
+          <Text style={styles.iconButtonLabel}>+</Text>
+        </TouchableOpacity>
+      </View>
 
-        <View style={styles.inputCard}>
-          <Text style={styles.label}>Add a Stream</Text>
-          <TextInput
-            placeholder="Station name"
-            value={nameInput}
-            onChangeText={setNameInput}
-            style={styles.input}
-            placeholderTextColor="#777"
-          />
-          <TextInput
-            placeholder="Stream URL"
-            value={urlInput}
-            onChangeText={setUrlInput}
-            style={styles.input}
-            autoCapitalize="none"
-            placeholderTextColor="#777"
-          />
-          <TouchableOpacity style={[styles.button, styles.primaryButton]} onPress={handleAddStation}>
-            <Text style={styles.buttonLabel}>Save</Text>
-          </TouchableOpacity>
-        </View>
-
+      <KeyboardAvoidingView style={styles.inner} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+        <Text style={styles.subhead}>Keep stream URLs handy and jump back in quickly.</Text>
         {error ? <Text style={styles.error}>{error}</Text> : null}
-
-        <View style={styles.nowPlaying}>
-          <Text style={styles.label}>Now Playing</Text>
-          {currentStation ? (
-            <View>
-              <Text style={styles.nowPlayingTitle}>{currentStation.name}</Text>
-              <Text style={styles.nowPlayingSubtitle}>{playbackState === 'playing' ? 'Streaming' : 'Buffering...'}</Text>
-              <TouchableOpacity style={[styles.button, styles.secondaryButton]} onPress={stopPlayback}>
-                <Text style={styles.buttonLabel}>Stop</Text>
-              </TouchableOpacity>
-            </View>
-          ) : (
-            <Text style={styles.nowPlayingSubtitle}>Idle</Text>
-          )}
-        </View>
-
         <FlatList
           data={stations}
           renderItem={renderStation}
@@ -333,6 +336,63 @@ export default function App() {
           contentContainerStyle={styles.list}
         />
       </KeyboardAvoidingView>
+
+      <View style={styles.bottomBar}>
+        <View style={styles.nowPlayingInfo}>
+          <Text style={styles.nowPlayingTitle} numberOfLines={1} ellipsizeMode="tail">
+            {activeStation ? activeStation.name : 'No station selected'}
+          </Text>
+          <Text style={styles.nowPlayingSubtitle} numberOfLines={1} ellipsizeMode="tail">
+            {statusLabel}
+          </Text>
+        </View>
+        <TouchableOpacity
+          onPress={handlePrimaryControl}
+          disabled={!activeStation}
+          style={[
+            styles.button,
+            playbackState === 'playing' || playbackState === 'loading' ? styles.secondaryButton : styles.primaryButton,
+            styles.controlButton,
+            !activeStation && styles.disabledButton,
+          ]}
+        >
+          <Text style={styles.buttonLabel}>
+            {playbackState === 'playing' || playbackState === 'loading' ? 'Stop' : 'Play'}
+          </Text>
+        </TouchableOpacity>
+      </View>
+
+      <Modal visible={showAddModal} animationType="slide" transparent onRequestClose={() => setShowAddModal(false)}>
+        <View style={styles.modalBackdrop}>
+          <View style={styles.modalCard}>
+            <Text style={styles.modalTitle}>Add a station</Text>
+            <TextInput
+              placeholder="Station name"
+              value={nameInput}
+              onChangeText={setNameInput}
+              style={styles.input}
+              placeholderTextColor="#94a3b8"
+            />
+            <TextInput
+              placeholder="Stream URL"
+              value={urlInput}
+              onChangeText={setUrlInput}
+              style={styles.input}
+              autoCapitalize="none"
+              placeholderTextColor="#94a3b8"
+            />
+            {formError ? <Text style={styles.error}>{formError}</Text> : null}
+            <View style={styles.modalActions}>
+              <TouchableOpacity style={[styles.button, styles.secondaryButton]} onPress={() => setShowAddModal(false)}>
+                <Text style={styles.buttonLabel}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={[styles.button, styles.primaryButton]} onPress={handleAddStation}>
+                <Text style={styles.buttonLabel}>Save</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -340,45 +400,80 @@ export default function App() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#0f172a',
+    backgroundColor: '#f8fafc',
+  },
+  topBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingTop: 10,
+    paddingBottom: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#e5e7eb',
+    backgroundColor: '#ffffff',
+  },
+  heading: {
+    fontSize: 22,
+    fontWeight: '700',
+    color: '#0f172a',
+  },
+  iconButton: {
+    width: 38,
+    height: 38,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#e5e7eb',
+    borderWidth: 1,
+    borderColor: '#cbd5e1',
+  },
+  iconButtonLabel: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: '#0f172a',
   },
   inner: {
     flex: 1,
     paddingHorizontal: 16,
-    paddingVertical: 24,
-    gap: 12,
-  },
-  heading: {
-    fontSize: 28,
-    fontWeight: '700',
-    color: '#e2e8f0',
+    paddingTop: 8,
   },
   subhead: {
     fontSize: 14,
-    color: '#cbd5e1',
-    marginBottom: 8,
+    color: '#475569',
+    paddingBottom: 8,
   },
-  inputCard: {
-    backgroundColor: '#111827',
-    borderRadius: 16,
-    padding: 14,
+  list: {
+    paddingTop: 6,
+    paddingBottom: 150,
     gap: 10,
-    borderWidth: 1,
-    borderColor: '#1f2937',
   },
-  label: {
-    color: '#e2e8f0',
+  card: {
+    backgroundColor: '#ffffff',
+    borderRadius: 12,
+    padding: 12,
+    gap: 8,
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+  },
+  activeCard: {
+    borderColor: '#2563eb',
+  },
+  cardHeader: {
+    gap: 2,
+  },
+  cardTitle: {
+    color: '#0f172a',
     fontSize: 16,
-    fontWeight: '600',
+    fontWeight: '700',
   },
-  input: {
-    backgroundColor: '#0b1220',
-    borderColor: '#1f2937',
-    borderWidth: 1,
-    borderRadius: 10,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    color: '#e5e7eb',
+  cardSubtitle: {
+    color: '#475569',
+    fontSize: 12,
+  },
+  cardActions: {
+    flexDirection: 'row',
+    gap: 10,
   },
   button: {
     paddingVertical: 10,
@@ -388,70 +483,90 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   primaryButton: {
-    backgroundColor: '#22d3ee',
+    backgroundColor: '#dbeafe',
+    borderWidth: 1,
+    borderColor: '#bfdbfe',
   },
   secondaryButton: {
-    backgroundColor: '#334155',
+    backgroundColor: '#e5e7eb',
+    borderWidth: 1,
+    borderColor: '#cbd5e1',
   },
   destructiveButton: {
-    backgroundColor: '#ef4444',
+    backgroundColor: '#fee2e2',
+    borderWidth: 1,
+    borderColor: '#fecdd3',
   },
   buttonLabel: {
-    color: '#0b1220',
+    color: '#0f172a',
     fontWeight: '700',
   },
   error: {
-    color: '#fca5a5',
+    color: '#b91c1c',
     fontSize: 14,
+    paddingTop: 4,
     marginBottom: 6,
   },
-  nowPlaying: {
-    backgroundColor: '#111827',
-    borderRadius: 16,
-    padding: 14,
-    gap: 8,
-    borderWidth: 1,
-    borderColor: '#1f2937',
+  bottomBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderTopWidth: 1,
+    borderTopColor: '#e5e7eb',
+    backgroundColor: '#ffffff',
+  },
+  nowPlayingInfo: {
+    flex: 1,
+    paddingRight: 12,
   },
   nowPlayingTitle: {
-    color: '#e2e8f0',
-    fontSize: 18,
+    color: '#0f172a',
+    fontSize: 15,
     fontWeight: '700',
   },
   nowPlayingSubtitle: {
-    color: '#cbd5e1',
-    fontSize: 14,
-    marginBottom: 6,
-  },
-  list: {
-    paddingBottom: 80,
-    gap: 10,
-  },
-  card: {
-    backgroundColor: '#111827',
-    borderRadius: 14,
-    padding: 12,
-    gap: 8,
-    borderWidth: 1,
-    borderColor: '#1f2937',
-  },
-  activeCard: {
-    borderColor: '#22d3ee',
-  },
-  cardHeader: {
-    gap: 4,
-  },
-  cardTitle: {
-    color: '#e2e8f0',
-    fontSize: 16,
-    fontWeight: '700',
-  },
-  cardSubtitle: {
-    color: '#cbd5e1',
+    color: '#475569',
     fontSize: 13,
   },
-  cardActions: {
+  controlButton: {
+    minWidth: 96,
+  },
+  disabledButton: {
+    opacity: 0.5,
+  },
+  input: {
+    backgroundColor: '#f8fafc',
+    borderColor: '#e5e7eb',
+    borderWidth: 1,
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    color: '#0f172a',
+  },
+  modalBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(15, 23, 42, 0.25)',
+    justifyContent: 'center',
+    padding: 16,
+  },
+  modalCard: {
+    backgroundColor: '#ffffff',
+    borderRadius: 16,
+    padding: 16,
+    gap: 10,
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+  },
+  modalTitle: {
+    color: '#0f172a',
+    fontSize: 18,
+    fontWeight: '700',
+  },
+  modalActions: {
     flexDirection: 'row',
+    justifyContent: 'flex-end',
     gap: 10,
   },
 });
