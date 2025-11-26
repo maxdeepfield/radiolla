@@ -24,6 +24,7 @@ const mimeTypes = {
 let staticServer;
 let tray;
 let mainWindow;
+const iconFileName = process.platform === 'win32' ? 'radiolla_icon.ico' : 'radiolla_icon.png';
 
 const startStaticServer = (rootDir) =>
   new Promise((resolve, reject) => {
@@ -85,7 +86,7 @@ const stopStaticServer = () => {
 
 const createTray = (win) => {
   if (tray) return tray;
-  const iconPath = path.join(__dirname, '..', 'assets', 'icon.png');
+  const iconPath = path.join(__dirname, '..', 'assets', iconFileName);
   tray = new Tray(iconPath);
   tray.setToolTip('Radiolla');
   const menu = Menu.buildFromTemplate([
@@ -118,10 +119,11 @@ const createTray = (win) => {
 
 const createWindow = async () => {
   const win = new BrowserWindow({
-    width: 1100,
-    height: 780,
+    width: 390,
+    height: 600,
+    maxHeight: 600,
     title: 'Radiolla',
-    icon: path.join(__dirname, '..', 'assets', 'icon.png'),
+    icon: path.join(__dirname, '..', 'assets', iconFileName),
     webPreferences: {
       contextIsolation: true,
     },
