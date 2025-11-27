@@ -1,6 +1,7 @@
 {
   "name": "radiolla",
   "version": "1.0.0",
+  "description": "Hipster-friendly radio manager built with Expo and Electron for custom streams and lightweight playback notifications across desktop, mobile, and web.",
   "main": "index.ts",
   "scripts": {
     "start": "expo start",
@@ -11,8 +12,9 @@
     "web:export": "expo export --platform web --output-dir dist",
     "electron:pack": "npm run web:export && cross-env NODE_ENV=production electron electron/main.js",
     "electron:build": "npm run web:export && electron-builder --win --publish never",
-    "prebuild:android": "npx expo prebuild --platform android",
-    "build:android:local": "cd android && gradlew.bat assembleRelease && cd .."
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint . --ext .ts,.tsx",
+    "lint:fix": "eslint . --ext .ts,.tsx --fix"
   },
   "dependencies": {
     "@expo-google-fonts/roboto-condensed": "^0.4.2",

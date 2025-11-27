@@ -6,6 +6,8 @@ import {
   KeyboardAvoidingView,
   Modal,
   Platform,
+  Pressable,
+  ScrollView,
   SafeAreaView,
   StyleSheet,
   Text,
@@ -13,11 +15,13 @@ import {
   TouchableOpacity,
   useColorScheme,
   View,
+  Linking,
 } from 'react-native';
 import { Audio, InterruptionModeAndroid, InterruptionModeIOS } from 'expo-av';
 import * as Notifications from 'expo-notifications';
 import { Subscription } from 'expo-modules-core';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import appConfig from './app.json';
 
 type Station = {
   id: string;
@@ -25,7 +29,7 @@ type Station = {
   url: string;
 };
 
-const STORAGE_KEY = 'radiolla:stations';
+const STORAGE_KEY = 'Radiolla:stations';
 
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
@@ -54,7 +58,7 @@ type Palette = {
   overlay: string;
 };
 
-const THEME_STORAGE_KEY = 'radiolla:theme-pref';
+const THEME_STORAGE_KEY = 'Radiolla:theme-pref';
 
 const palettes: Record<'light' | 'dark', Palette> = {
   light: {
@@ -99,6 +103,16 @@ const fonts = {
   bold: 'RobotoCondensed_700Bold',
 };
 
+type AppConfig = {
+  expo?: {
+    version?: string;
+  };
+};
+
+const APP_VERSION = (appConfig as AppConfig).expo?.version ?? '1.0.0';
+const GITHUB_URL = 'https://github.com/maxdeepfield/Radiolla';
+const AF_URL = 'https://absolutefreakout.com';
+
 const PLAYBACK_CATEGORY_ID = 'playback';
 const STOP_ACTION_ID = 'stop-playback';
 
@@ -119,6 +133,7 @@ export default function App() {
   const [notificationsAllowed, setNotificationsAllowed] = useState(false);
   const [showAddModal, setShowAddModal] = useState(false);
   const [themePref, setThemePref] = useState<ThemePref>('auto');
+  const [themeMenuOpen, setThemeMenuOpen] = useState(false);
   const [contextStationId, setContextStationId] = useState<string | null>(null);
   const [streamError, setStreamError] = useState<string | null>(null);
   const [editingStation, setEditingStation] = useState<Station | null>(null);
@@ -438,8 +453,18 @@ export default function App() {
     }
   };
 
-  const toggleMenu = () => setMenuOpen((prev) => !prev);
-  const closeMenu = () => setMenuOpen(false);
+  const toggleMenu = () =>
+    setMenuOpen((prev) => {
+      const next = !prev;
+      if (!next) {
+        setThemeMenuOpen(false);
+      }
+      return next;
+    });
+  const closeMenu = () => {
+    setMenuOpen(false);
+    setThemeMenuOpen(false);
+  };
 
   const renderStation = ({ item }: { item: Station }) => {
     const isCurrent = currentStation?.id === item.id;
@@ -450,7 +475,6 @@ export default function App() {
       <TouchableOpacity
         activeOpacity={0.95}
         onPress={() => handleStationPress(item)}
-        onLongPress={() => toggleStationMenu(item.id)}
         style={[styles.card, highlighted && styles.activeCard, playing && styles.playingCard]}
       >
         <View style={styles.cardMain}>
@@ -462,24 +486,52 @@ export default function App() {
               {item.url}
             </Text>
           </View>
+          <Pressable
+            onPress={() => toggleStationMenu(item.id)}
+            hitSlop={6}
+            style={({ hovered, pressed }) => [
+              styles.cardMenuButton,
+              (hovered || pressed) && styles.cardMenuButtonActive,
+              showActions && styles.cardMenuButtonActive,
+            ]}
+          >
+            <Text style={styles.cardMenuIcon}>⋮</Text>
+          </Pressable>
         </View>
         {showActions ? (
-          <View style={styles.contextRow}>
-            <TouchableOpacity style={[styles.contextButton, styles.secondaryButton]} onPress={() => openEditModal(item)}>
-              <Text style={styles.buttonLabel}>Edit</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={[styles.contextButton, styles.destructiveButton]}
+          <View style={styles.cardMenuSheet}>
+            <Pressable
+              style={({ hovered, pressed }) => [
+                styles.cardMenuItem,
+                (hovered || pressed) && styles.cardMenuItemActive,
+              ]}
+              onPress={() => openEditModal(item)}
+            >
+              <Text style={styles.cardMenuLabel}>Edit</Text>
+            </Pressable>
+            <View style={styles.menuDivider} />
+            <Pressable
+              style={({ hovered, pressed }) => [
+                styles.cardMenuItem,
+                (hovered || pressed) && styles.cardMenuItemActive,
+              ]}
               onPress={() => {
                 closeStationMenu();
                 handleRemove(item.id);
               }}
             >
-              <Text style={styles.buttonLabel}>Remove</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={[styles.contextButton, styles.secondaryButton]} onPress={closeStationMenu}>
-              <Text style={styles.buttonLabel}>Close</Text>
-            </TouchableOpacity>
+              <Text style={styles.cardMenuLabel}>Remove</Text>
+            </Pressable>
+            <View style={styles.menuDivider} />
+            <Pressable
+              style={({ hovered, pressed }) => [
+                styles.cardMenuItem,
+                (hovered || pressed) && styles.cardMenuItemActive,
+              ]}
+              onPress={closeStationMenu}
+            >
+              <Text style={styles.cardMenuLabel}>Close</Text>
+            </Pressable>
           </View>
         ) : null}
       </TouchableOpacity>
@@ -515,6 +567,14 @@ export default function App() {
     setAboutVisible(true);
   };
 
+  const openExternalLink = async (target: string) => {
+    try {
+      await Linking.openURL(target);
+    } catch {
+      // ignore link failures
+    }
+  };
+
   const closeAbout = () => setAboutVisible(false);
   const dismissUnexpectedError = () => setUnexpectedError(null);
 
@@ -537,6 +597,7 @@ export default function App() {
   } else if (activeStation) {
     statusLabel = streamError ? `Stopped · ${streamError}` : 'Stopped';
   }
+  const controlIcon = playbackState === 'playing' || playbackState === 'loading' ? '■' : '▶';
 
   return (
     <SafeAreaView style={styles.container}>
@@ -557,31 +618,65 @@ export default function App() {
         <>
           <TouchableOpacity style={styles.menuBackdrop} activeOpacity={1} onPress={closeMenu} />
           <View style={styles.menuPanel}>
-            <TouchableOpacity style={styles.menuItem} onPress={openAddModal}>
-              <Text style={styles.menuItemLabel}>Add station</Text>
-            </TouchableOpacity>
-            <View style={styles.menuSection}>
-              <Text style={styles.menuSectionLabel}>Theme</Text>
-              <View style={styles.menuThemeOptions}>
-                {THEME_OPTIONS.map((option) => {
-                  const active = themePref === option.key;
-                  return (
-                    <TouchableOpacity
-                      key={option.key}
-                      onPress={() => updateThemePref(option.key)}
-                      style={[styles.menuThemeButton, active && styles.menuThemeButtonActive]}
-                    >
-                      <Text style={[styles.menuThemeButtonLabel, active && styles.menuThemeButtonLabelActive]}>
-                        {option.label}
-                      </Text>
-                    </TouchableOpacity>
-                  );
-                })}
-              </View>
-            </View>
-            <TouchableOpacity style={styles.menuItem} onPress={openAbout}>
-              <Text style={styles.menuItemLabel}>About</Text>
-            </TouchableOpacity>
+            <ScrollView contentContainerStyle={styles.menuContent} showsVerticalScrollIndicator={false} bounces={false}>
+              <Pressable
+                style={({ hovered, pressed }) => [
+                  styles.menuItem,
+                  (hovered || pressed) && styles.menuItemActive,
+                ]}
+                onPress={openAddModal}
+              >
+                <Text style={styles.menuItemLabel}>Add station</Text>
+              </Pressable>
+              <View style={styles.menuDivider} />
+              <Pressable
+                style={({ hovered, pressed }) => [
+                  styles.menuItem,
+                  (hovered || pressed) && styles.menuItemActive,
+                ]}
+                onPress={() => setThemeMenuOpen((prev) => !prev)}
+              >
+                <View style={styles.menuItemRow}>
+                  <Text style={styles.menuItemLabel}>Theme</Text>
+                  <Text style={styles.menuItemHint}>{themeMenuOpen ? 'v' : '>'}</Text>
+                </View>
+              </Pressable>
+              {themeMenuOpen ? (
+                <View style={styles.submenu}>
+                  <Text style={styles.menuSectionLabel}>Theme</Text>
+                  <View style={styles.menuThemeOptions}>
+                    {THEME_OPTIONS.map((option) => {
+                      const active = themePref === option.key;
+                      return (
+                        <Pressable
+                          key={option.key}
+                          onPress={() => updateThemePref(option.key)}
+                          style={({ hovered, pressed }) => [
+                            styles.menuThemeButton,
+                            active && styles.menuThemeButtonActive,
+                            (hovered || pressed) && styles.menuThemeButtonHover,
+                          ]}
+                        >
+                          <Text style={[styles.menuThemeButtonLabel, active && styles.menuThemeButtonLabelActive]}>
+                            {option.label}
+                          </Text>
+                        </Pressable>
+                      );
+                    })}
+                  </View>
+                </View>
+              ) : null}
+              <View style={styles.menuDivider} />
+              <Pressable
+                style={({ hovered, pressed }) => [
+                  styles.menuItem,
+                  (hovered || pressed) && styles.menuItemActive,
+                ]}
+                onPress={openAbout}
+              >
+                <Text style={styles.menuItemLabel}>About</Text>
+              </Pressable>
+            </ScrollView>
           </View>
         </>
       )}
@@ -615,10 +710,9 @@ export default function App() {
             styles.controlButton,
             !activeStation && styles.disabledButton,
           ]}
+          accessibilityLabel={playbackState === 'playing' || playbackState === 'loading' ? 'Stop' : 'Play'}
         >
-          <Text style={styles.buttonLabel}>
-            {playbackState === 'playing' || playbackState === 'loading' ? 'Stop' : 'Play'}
-          </Text>
+          <Text style={styles.controlIcon}>{controlIcon}</Text>
         </TouchableOpacity>
       </View>
 
@@ -662,6 +756,29 @@ export default function App() {
               Absolute Freakout keeps your curated streams close at hand with fast theme switching and compact VIP
               controls.
             </Text>
+            <Text style={styles.infoMeta}>Version {APP_VERSION}</Text>
+            <View style={styles.linkList}>
+              <Pressable
+                style={({ hovered, pressed }) => [
+                  styles.linkRow,
+                  (hovered || pressed) && styles.linkRowActive,
+                ]}
+                onPress={() => openExternalLink(GITHUB_URL)}
+              >
+                <Text style={styles.linkLabel}>GitHub repo</Text>
+                <Text style={styles.linkHint}>{GITHUB_URL}</Text>
+              </Pressable>
+              <Pressable
+                style={({ hovered, pressed }) => [
+                  styles.linkRow,
+                  (hovered || pressed) && styles.linkRowActive,
+                ]}
+                onPress={() => openExternalLink(AF_URL)}
+              >
+                <Text style={styles.linkLabel}>AbsoluteFreakout.com</Text>
+                <Text style={styles.linkHint}>{AF_URL}</Text>
+              </Pressable>
+            </View>
             <TouchableOpacity style={[styles.button, styles.primaryButton]} onPress={closeAbout}>
               <Text style={styles.buttonLabel}>Close</Text>
             </TouchableOpacity>
@@ -743,9 +860,11 @@ const createStyles = (palette: Palette) =>
       top: 54,
       right: 14,
       width: 210,
+      maxHeight: '75%',
       backgroundColor: palette.surface,
       borderWidth: 1,
       borderColor: palette.borderStrong,
+      borderStyle: 'dashed',
       borderRadius: 10,
       padding: 12,
       gap: 12,
@@ -756,8 +875,28 @@ const createStyles = (palette: Palette) =>
       elevation: 6,
       zIndex: 11,
     },
+    menuContent: {
+      gap: 12,
+      paddingBottom: 4,
+    },
     menuItem: {
       paddingVertical: 6,
+      borderRadius: 6,
+      paddingHorizontal: 8,
+    },
+    menuItemActive: {
+      backgroundColor: palette.accentSoft,
+    },
+    menuItemRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      gap: 12,
+    },
+    menuItemHint: {
+      color: palette.textSecondary,
+      fontFamily: fonts.medium,
+      fontSize: 12,
     },
     menuItemLabel: {
       color: palette.textPrimary,
@@ -774,6 +913,14 @@ const createStyles = (palette: Palette) =>
       color: palette.textSecondary,
       fontFamily: fonts.medium,
     },
+    submenu: {
+      padding: 10,
+      borderRadius: 8,
+      borderWidth: 1,
+      borderColor: palette.border,
+      backgroundColor: palette.background,
+      gap: 8,
+    },
     menuThemeOptions: {
       flexDirection: 'row',
       gap: 6,
@@ -787,6 +934,10 @@ const createStyles = (palette: Palette) =>
       borderColor: palette.border,
       backgroundColor: palette.surface,
     },
+    menuThemeButtonHover: {
+      backgroundColor: palette.accentSoft,
+      borderColor: palette.accentStrong,
+    },
     menuThemeButtonActive: {
       borderColor: palette.accentStrong,
       backgroundColor: palette.accentSoft,
@@ -799,10 +950,17 @@ const createStyles = (palette: Palette) =>
     menuThemeButtonLabelActive: {
       color: palette.textPrimary,
     },
+    menuDivider: {
+      borderBottomWidth: 1,
+      borderColor: palette.border,
+      borderStyle: 'dashed',
+      marginVertical: 4,
+      opacity: 0.7,
+    },
     inner: {
       flex: 1,
       paddingHorizontal: 12,
-      paddingTop: 2,
+      paddingTop: 12,
     },
     subhead: {
       fontSize: 13,
@@ -849,10 +1007,13 @@ const createStyles = (palette: Palette) =>
     card: {
       backgroundColor: palette.surface,
       borderRadius: 4,
-      padding: 10,
+      paddingTop: 10,
+      paddingHorizontal: 8,
+      paddingBottom: 8,
       borderWidth: 1,
       borderColor: palette.border,
-      marginBottom: 8,
+      borderStyle: 'dashed',
+      marginBottom: 12,
     },
     activeCard: {
       borderColor: palette.accentStrong,
@@ -881,6 +1042,25 @@ const createStyles = (palette: Palette) =>
       fontSize: 10,
       fontFamily: fonts.regular,
     },
+    cardMenuButton: {
+      width: 32,
+      height: 32,
+      borderRadius: 8,
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderWidth: 1,
+      borderColor: palette.border,
+      backgroundColor: palette.surface,
+    },
+    cardMenuButtonActive: {
+      borderColor: palette.accentStrong,
+      backgroundColor: palette.accentSoft,
+    },
+    cardMenuIcon: {
+      color: palette.textPrimary,
+      fontSize: 16,
+      fontFamily: fonts.bold,
+    },
     button: {
       paddingVertical: 7,
       paddingHorizontal: 10,
@@ -894,16 +1074,19 @@ const createStyles = (palette: Palette) =>
       backgroundColor: palette.accentSoft,
       borderWidth: 1,
       borderColor: palette.accentStrong,
+      borderStyle: 'dashed',
     },
     secondaryButton: {
       backgroundColor: palette.neutral,
       borderWidth: 1,
       borderColor: palette.border,
+      borderStyle: 'dashed',
     },
     destructiveButton: {
       backgroundColor: palette.destructiveSoft,
       borderWidth: 1,
       borderColor: palette.destructiveStrong,
+      borderStyle: 'dashed',
     },
     buttonLabel: {
       color: palette.textPrimary,
@@ -917,17 +1100,25 @@ const createStyles = (palette: Palette) =>
       marginBottom: 4,
       fontFamily: fonts.medium,
     },
-    contextRow: {
-      flexDirection: 'row',
-      justifyContent: 'flex-end',
-      gap: 6,
-      marginTop: 6,
-      flexWrap: 'wrap',
+    cardMenuSheet: {
+      marginTop: 8,
+      borderRadius: 10,
+      borderWidth: 1,
+      borderColor: palette.borderStrong,
+      backgroundColor: palette.surface,
+      overflow: 'hidden',
     },
-    contextButton: {
-      paddingVertical: 6,
+    cardMenuItem: {
+      paddingVertical: 10,
       paddingHorizontal: 12,
-      borderRadius: 4,
+    },
+    cardMenuItemActive: {
+      backgroundColor: palette.accentSoft,
+    },
+    cardMenuLabel: {
+      color: palette.textPrimary,
+      fontFamily: fonts.bold,
+      fontSize: 13,
     },
     bottomBar: {
       flexDirection: 'row',
@@ -955,7 +1146,19 @@ const createStyles = (palette: Palette) =>
       fontFamily: fonts.regular,
     },
     controlButton: {
-      minWidth: 90,
+      width: 46,
+      height: 46,
+      paddingHorizontal: 0,
+      paddingVertical: 0,
+      borderRadius: 10,
+      flexGrow: 0,
+      alignSelf: 'flex-end',
+      marginLeft: 12,
+    },
+    controlIcon: {
+      color: palette.textPrimary,
+      fontSize: 18,
+      fontFamily: fonts.bold,
     },
     disabledButton: {
       opacity: 0.5,
@@ -974,6 +1177,7 @@ const createStyles = (palette: Palette) =>
       flex: 1,
       backgroundColor: palette.overlay,
       justifyContent: 'center',
+      alignItems: 'center',
       padding: 16,
     },
     modalCard: {
@@ -983,6 +1187,10 @@ const createStyles = (palette: Palette) =>
       gap: 6,
       borderWidth: 1,
       borderColor: palette.borderStrong,
+      width: '90%',
+      maxWidth: 420,
+      minWidth: 300,
+      borderStyle: 'dashed',
     },
     infoCard: {
       backgroundColor: palette.surface,
@@ -993,11 +1201,43 @@ const createStyles = (palette: Palette) =>
       borderColor: palette.borderStrong,
       maxWidth: 320,
       alignSelf: 'center',
+      borderStyle: 'dashed',
     },
     infoBody: {
       color: palette.textSecondary,
       fontFamily: fonts.regular,
       fontSize: 13,
+    },
+    infoMeta: {
+      color: palette.textSecondary,
+      fontFamily: fonts.medium,
+      fontSize: 12,
+    },
+    linkList: {
+      gap: 8,
+    },
+    linkRow: {
+      borderWidth: 1,
+      borderColor: palette.border,
+      borderRadius: 8,
+      paddingVertical: 8,
+      paddingHorizontal: 10,
+      backgroundColor: palette.surface,
+      gap: 2,
+    },
+    linkRowActive: {
+      borderColor: palette.accentStrong,
+      backgroundColor: palette.accentSoft,
+    },
+    linkLabel: {
+      color: palette.textPrimary,
+      fontFamily: fonts.bold,
+      fontSize: 13,
+    },
+    linkHint: {
+      color: palette.textSecondary,
+      fontFamily: fonts.regular,
+      fontSize: 12,
     },
     modalTitle: {
       color: palette.textPrimary,

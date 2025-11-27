@@ -25,6 +25,8 @@ let staticServer;
 let tray;
 let mainWindow;
 const iconFileName = process.platform === 'win32' ? 'radiolla_icon.ico' : 'radiolla_icon.png';
+const STATIC_HOST = '127.0.0.1';
+const STATIC_PORT = 19573;
 
 const startStaticServer = (rootDir) =>
   new Promise((resolve, reject) => {
@@ -64,11 +66,25 @@ const startStaticServer = (rootDir) =>
       });
     });
 
-    server.on('error', reject);
-    server.listen(0, '127.0.0.1', () => {
+    const finish = () => {
+      server.off('error', handleError);
+      server.off('listening', finish);
       const { port } = server.address();
-      resolve({ server, url: `http://127.0.0.1:${port}` });
-    });
+      resolve({ server, url: `http://${STATIC_HOST}:${port}` });
+    };
+
+    const handleError = (err) => {
+      if (err.code === 'EADDRINUSE') {
+        // Keep a stable origin for persisted storage; fall back only if the preferred port is busy.
+        server.close(() => server.listen(0, STATIC_HOST));
+        return;
+      }
+      reject(err);
+    };
+
+    server.on('error', handleError);
+    server.on('listening', finish);
+    server.listen(STATIC_PORT, STATIC_HOST);
   });
 
 const ensureStaticServer = async (rootDir) => {
@@ -100,6 +116,15 @@ const createTray = (win) => {
       },
     },
     {
+      label: 'Always on top',
+      type: 'checkbox',
+      checked: win.isAlwaysOnTop(),
+      click: (menuItem) => {
+        if (win.isDestroyed()) return;
+        win.setAlwaysOnTop(menuItem.checked);
+      },
+    },
+    {
       label: 'Quit',
       click: () => {
         stopStaticServer();
@@ -118,17 +143,25 @@ const createTray = (win) => {
 };
 
 const createWindow = async () => {
+
+  // Create main window but keep it hidden initially
   const win = new BrowserWindow({
     width: 390,
     height: 600,
     maxHeight: 600,
     title: 'Radiolla',
     icon: path.join(__dirname, '..', 'assets', iconFileName),
+    show: false, // Don't show until ready
+    backgroundColor: '#0f1220', // Match app dark background to avoid white flash
     webPreferences: {
       contextIsolation: true,
     },
   });
   mainWindow = win;
+
+  // Remove the default menu bar from the main window.
+  win.setMenu(null);
+  win.setMenuBarVisibility(false);
 
   win.on('minimize', (event) => {
     event.preventDefault();
@@ -143,17 +176,44 @@ const createWindow = async () => {
     }
   });
 
-  const distPath = path.join(__dirname, '..', 'dist', 'index.html');
-  const fallbackPath = path.join(__dirname, '..', 'web-build', 'index.html');
-  const localPath = fs.existsSync(distPath) ? distPath : fallbackPath;
-  const startUrl = process.env.EXPO_WEB_URL || localPath;
+  const loadMainContent = async () => {
+    try {
+      const distPath = path.join(__dirname, '..', 'dist', 'index.html');
+      const fallbackPath = path.join(__dirname, '..', 'web-build', 'index.html');
+      const devUrl = process.env.EXPO_WEB_URL;
 
-  if (startUrl.startsWith('http')) {
-    await win.loadURL(startUrl);
-  } else {
-    const { url: staticUrl } = await ensureStaticServer(path.dirname(localPath));
-    await win.loadURL(staticUrl);
-  }
+      let contentUrl;
+      if (devUrl) {
+        contentUrl = devUrl;
+      } else if (fs.existsSync(distPath)) {
+        const { url: staticUrl } = await ensureStaticServer(path.dirname(distPath));
+        contentUrl = staticUrl;
+      } else if (fs.existsSync(fallbackPath)) {
+        const { url: staticUrl } = await ensureStaticServer(path.dirname(fallbackPath));
+        contentUrl = staticUrl;
+      } else {
+        contentUrl = 'http://localhost:8082';
+      }
+
+      console.log('Loading content from:', contentUrl);
+      await win.loadURL(contentUrl);
+    } catch (err) {
+      console.error('Failed to load main content', err);
+    }
+  };
+
+  await win
+    .loadFile(path.join(__dirname, 'loading.html'))
+    .catch((err) => {
+      // Navigating away from the loading screen can emit ERR_ABORTED; ignore it.
+      if (err?.code !== 'ERR_ABORTED') {
+        throw err;
+      }
+    });
+  win.center();
+  win.show();
+  // Start loading the main app after the spinner has been displayed.
+  loadMainContent();
 
   win.webContents.setWindowOpenHandler(({ url }) => {
     shell.openExternal(url);
