@@ -140,6 +140,8 @@ export default function App() {
   const [menuOpen, setMenuOpen] = useState(false);
   const [aboutVisible, setAboutVisible] = useState(false);
   const [unexpectedError, setUnexpectedError] = useState<string | null>(null);
+  const [volume, setVolume] = useState(1.0);
+  const [showVolumePanel, setShowVolumePanel] = useState(false);
   const soundRef = useRef<Audio.Sound | null>(null);
   const playbackNotificationIdRef = useRef<string | null>(null);
   const responseListenerRef = useRef<Subscription | null>(null);
@@ -578,6 +580,23 @@ export default function App() {
   const closeAbout = () => setAboutVisible(false);
   const dismissUnexpectedError = () => setUnexpectedError(null);
 
+  const toggleVolumePanel = () => {
+    if (activeStation) {
+      setShowVolumePanel((prev) => !prev);
+    }
+  };
+
+  const handleVolumeChange = async (newVolume: number) => {
+    setVolume(newVolume);
+    if (soundRef.current) {
+      try {
+        await soundRef.current.setVolumeAsync(newVolume);
+      } catch {
+        // ignore volume change errors
+      }
+    }
+  };
+
   const handlePrimaryControl = () => {
     const target = currentStation || lastStation;
     if (!target) return;
@@ -693,14 +712,19 @@ export default function App() {
       </KeyboardAvoidingView>
 
       <View style={styles.bottomBar}>
-        <View style={styles.nowPlayingInfo}>
+        <TouchableOpacity
+          style={styles.nowPlayingInfo}
+          onPress={toggleVolumePanel}
+          activeOpacity={activeStation ? 0.7 : 1}
+          disabled={!activeStation}
+        >
           <Text style={styles.nowPlayingTitle} numberOfLines={1} ellipsizeMode="tail">
             {activeStation ? activeStation.name : 'No station selected'}
           </Text>
           <Text style={styles.nowPlayingSubtitle} numberOfLines={1} ellipsizeMode="tail">
             {statusLabel}
           </Text>
-        </View>
+        </TouchableOpacity>
         <TouchableOpacity
           onPress={handlePrimaryControl}
           disabled={!activeStation}
@@ -715,6 +739,49 @@ export default function App() {
           <Text style={styles.controlIcon}>{controlIcon}</Text>
         </TouchableOpacity>
       </View>
+
+      {showVolumePanel && activeStation && (
+        <View style={styles.volumePanel}>
+          <View style={styles.volumeHeader}>
+            <Text style={styles.volumeLabel}>Volume</Text>
+            <Text style={styles.volumeValue}>{Math.round(volume * 100)}%</Text>
+          </View>
+          <View style={styles.volumeSliderContainer}>
+            <TouchableOpacity onPress={() => handleVolumeChange(0)} style={styles.volumeIcon}>
+              <Text style={styles.volumeIconText}>🔈</Text>
+            </TouchableOpacity>
+            <View style={styles.volumeTrack}>
+              <View style={[styles.volumeFill, { width: `${volume * 100}%` }]} />
+              <Pressable
+                style={styles.volumeSliderTouch}
+                onPress={(e) => {
+                  const { locationX } = e.nativeEvent;
+                  const trackWidth = 200;
+                  const newVolume = Math.max(0, Math.min(1, locationX / trackWidth));
+                  handleVolumeChange(newVolume);
+                }}
+              />
+            </View>
+            <TouchableOpacity onPress={() => handleVolumeChange(1)} style={styles.volumeIcon}>
+              <Text style={styles.volumeIconText}>🔊</Text>
+            </TouchableOpacity>
+          </View>
+          <View style={styles.volumePresets}>
+            {[0, 0.25, 0.5, 0.75, 1].map((preset) => (
+              <TouchableOpacity
+                key={preset}
+                style={[styles.volumePreset, Math.abs(volume - preset) < 0.05 && styles.volumePresetActive]}
+                onPress={() => handleVolumeChange(preset)}
+              >
+                <Text style={styles.volumePresetLabel}>{Math.round(preset * 100)}%</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+          <TouchableOpacity style={styles.volumeClose} onPress={() => setShowVolumePanel(false)}>
+            <Text style={styles.volumeCloseLabel}>Done</Text>
+          </TouchableOpacity>
+        </View>
+      )}
 
       <Modal visible={showAddModal} animationType="slide" transparent onRequestClose={closeStationModal}>
         <View style={styles.modalBackdrop}>
@@ -1249,5 +1316,107 @@ const createStyles = (palette: Palette) =>
       flexDirection: 'row',
       justifyContent: 'flex-end',
       gap: 8,
+    },
+    volumePanel: {
+      position: 'absolute',
+      bottom: 70,
+      left: 14,
+      right: 14,
+      backgroundColor: palette.surface,
+      borderRadius: 10,
+      borderWidth: 1,
+      borderColor: palette.borderStrong,
+      borderStyle: 'dashed',
+      padding: 14,
+      gap: 12,
+      shadowColor: '#000',
+      shadowOpacity: 0.2,
+      shadowRadius: 8,
+      shadowOffset: { width: 0, height: -2 },
+      elevation: 8,
+    },
+    volumeHeader: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+    },
+    volumeLabel: {
+      color: palette.textPrimary,
+      fontSize: 14,
+      fontWeight: '700',
+      fontFamily: fonts.bold,
+    },
+    volumeValue: {
+      color: palette.textSecondary,
+      fontSize: 13,
+      fontFamily: fonts.medium,
+    },
+    volumeSliderContainer: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 10,
+    },
+    volumeIcon: {
+      padding: 4,
+    },
+    volumeIconText: {
+      fontSize: 18,
+    },
+    volumeTrack: {
+      flex: 1,
+      height: 8,
+      backgroundColor: palette.neutral,
+      borderRadius: 4,
+      overflow: 'hidden',
+      position: 'relative',
+    },
+    volumeFill: {
+      position: 'absolute',
+      left: 0,
+      top: 0,
+      bottom: 0,
+      backgroundColor: palette.accentStrong,
+      borderRadius: 4,
+    },
+    volumeSliderTouch: {
+      ...StyleSheet.absoluteFillObject,
+    },
+    volumePresets: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      gap: 6,
+    },
+    volumePreset: {
+      flex: 1,
+      paddingVertical: 8,
+      borderRadius: 6,
+      borderWidth: 1,
+      borderColor: palette.border,
+      backgroundColor: palette.background,
+      alignItems: 'center',
+    },
+    volumePresetActive: {
+      borderColor: palette.accentStrong,
+      backgroundColor: palette.accentSoft,
+    },
+    volumePresetLabel: {
+      color: palette.textSecondary,
+      fontSize: 11,
+      fontFamily: fonts.medium,
+    },
+    volumeClose: {
+      paddingVertical: 10,
+      borderRadius: 6,
+      backgroundColor: palette.accentSoft,
+      borderWidth: 1,
+      borderColor: palette.accentStrong,
+      borderStyle: 'dashed',
+      alignItems: 'center',
+    },
+    volumeCloseLabel: {
+      color: palette.textPrimary,
+      fontSize: 13,
+      fontWeight: '700',
+      fontFamily: fonts.bold,
     },
   });

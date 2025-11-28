@@ -116,6 +116,22 @@ const createTray = (win) => {
       },
     },
     {
+      label: 'Play/Pause',
+      click: () => {
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('playback-control', 'toggle');
+        }
+      }
+    },
+    {
+      label: 'Stop',
+      click: () => {
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('playback-control', 'stop');
+        }
+      }
+    },
+    {
       label: 'Always on top',
       type: 'checkbox',
       checked: win.isAlwaysOnTop(),
