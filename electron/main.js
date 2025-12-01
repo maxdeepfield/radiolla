@@ -24,6 +24,8 @@ const mimeTypes = {
 let staticServer;
 let tray;
 let mainWindow;
+let muteMenuItem = null;
+let pendingMuteState = null;
 const iconFileName = process.platform === 'win32' ? 'radiolla_icon.ico' : 'radiolla_icon.png';
 const STATIC_HOST = '127.0.0.1';
 const STATIC_PORT = 19573;
@@ -148,6 +150,9 @@ const createTray = (win) => {
     },
     {
       label: 'Mute',
+      id: 'tray-mute',
+      type: 'checkbox',
+      checked: false,
       click: () => {
         if (mainWindow && !mainWindow.isDestroyed()) {
           mainWindow.webContents.send('playback-control', 'mute');
@@ -180,6 +185,7 @@ const createTray = (win) => {
     },
   ]);
   tray.setContextMenu(menu);
+  registerMuteMenuItem(menu);
   tray.on('click', () => {
     if (!win.isDestroyed()) {
       win.show();
@@ -187,6 +193,20 @@ const createTray = (win) => {
     }
   });
   return tray;
+};
+
+const applyMuteStateToMenu = (isMuted) => {
+  pendingMuteState = isMuted;
+  if (muteMenuItem) {
+    muteMenuItem.checked = Boolean(isMuted);
+  }
+};
+
+const registerMuteMenuItem = (menu) => {
+  muteMenuItem = menu.getMenuItemById('tray-mute');
+  if (muteMenuItem && typeof pendingMuteState === 'boolean') {
+    muteMenuItem.checked = pendingMuteState;
+  }
 };
 
 const createWindow = async () => {
@@ -198,14 +218,15 @@ const createWindow = async () => {
     height: savedState?.height || 600,
     x: savedState?.x,
     y: savedState?.y,
-    maxHeight: 600,
     title: 'Radiolla',
     icon: path.join(__dirname, '..', 'assets', iconFileName),
     show: false, // Don't show until ready
     backgroundColor: '#0f1220', // Match app dark background to avoid white flash
     webPreferences: {
-      contextIsolation: false,
-      nodeIntegration: true,
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: false,
+      preload: path.join(__dirname, 'preload.js'),
     },
   });
   mainWindow = win;
@@ -270,12 +291,23 @@ const createWindow = async () => {
   // Start loading the main app after the spinner has been displayed.
   loadMainContent();
 
-  win.webContents.once('dom-ready', () => {
-    // Expose ipcRenderer to the renderer process
-    win.webContents.executeJavaScript(`
-      window.ipcRenderer = require('electron').ipcRenderer;
-    `);
+  // Surface renderer console logs in the main process to help debugging blank screens.
+  win.webContents.on('console-message', (_event, level, message, line, sourceId) => {
+    const levels = ['log', 'warn', 'error', 'info'];
+    const tag = levels[level] || 'log';
+    console.log(`[renderer:${tag}] ${message} (${sourceId}:${line})`);
   });
+
+  win.webContents.on('did-fail-load', (_event, errorCode, errorDescription, validatedURL) => {
+    console.error(`Renderer failed to load ${validatedURL}: ${errorDescription} (${errorCode})`);
+  });
+
+  win.webContents.on('did-finish-load', () => {
+    console.log('Renderer finished loading.');
+  });
+
+  // Uncomment to open devtools by default when debugging electron blank window issues.
+  // win.webContents.openDevTools({ mode: 'detach' });
 
   win.webContents.setWindowOpenHandler(({ url }) => {
     shell.openExternal(url);
@@ -284,6 +316,14 @@ const createWindow = async () => {
 
   createTray(win);
 };
+
+ipcMain.on('playback-mute-state', (_event, payload) => {
+  const next =
+    typeof payload === 'boolean' ? payload : payload?.isMuted;
+  if (typeof next === 'boolean') {
+    applyMuteStateToMenu(next);
+  }
+});
 
 app.whenReady().then(() => {
   createWindow().catch((err) => {

@@ -217,11 +217,17 @@ export default function App() {
     return () => {
       stopPlayback();
       // Clean up IPC listener
-      if (ipcRenderer && ipcListener) {
-        ipcRenderer.removeListener('playback-control', ipcListener);
-      }
-    };
-  }, []);
+    if (ipcRenderer && ipcListener) {
+      ipcRenderer.removeListener('playback-control', ipcListener);
+    }
+  };
+}, []);
+
+  useEffect(() => {
+    if (ipcRenderer?.send) {
+      ipcRenderer.send('playback-mute-state', { isMuted });
+    }
+  }, [isMuted]);
 
   useEffect(() => {
     const globalErrorUtils = (globalThis as any).ErrorUtils;
