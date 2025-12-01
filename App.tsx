@@ -19,11 +19,21 @@ import {
 } from 'react-native';
 import { Audio, InterruptionModeAndroid, InterruptionModeIOS } from 'expo-av';
 import * as Notifications from 'expo-notifications';
-import { Subscription } from 'expo-modules-core';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import appConfig from './app.json';
+import * as DocumentPicker from 'expo-document-picker';
+import * as FileSystem from 'expo-file-system';
+import * as Sharing from 'expo-sharing';
+import { parsePlaylist, generateM3U, generatePLS } from './utils/playlist';
 
-type Station = {
+// Add this import for Electron IPC handling
+let ipcRenderer: any = null;
+if (Platform.OS === 'web') {
+  // In Electron environment, ipcRenderer is exposed globally
+  ipcRenderer = (window as any).ipcRenderer || null;
+}
+
+export type Station = {
   id: string;
   name: string;
   url: string;
@@ -142,10 +152,20 @@ export default function App() {
   const [unexpectedError, setUnexpectedError] = useState<string | null>(null);
   const [volume, setVolume] = useState(1.0);
   const [showVolumePanel, setShowVolumePanel] = useState(false);
+  const [isMuted, setIsMuted] = useState(false);
+
+  // Import/Export State
+  const [showImportModal, setShowImportModal] = useState(false);
+  const [importStatus, setImportStatus] = useState<string | null>(null);
+
   const soundRef = useRef<Audio.Sound | null>(null);
   const playbackNotificationIdRef = useRef<string | null>(null);
-  const responseListenerRef = useRef<Subscription | null>(null);
+  const responseListenerRef = useRef<any>(null);
   const stopPlaybackRef = useRef<() => Promise<void>>(async () => undefined);
+  const primaryControlRef = useRef<() => void>(() => {});
+  const trayPlayRef = useRef<() => void>(() => {});
+  const trayMuteRef = useRef<() => void>(() => {});
+  const lastVolumeRef = useRef(1);
 
   const resolvedTheme = themePref === 'auto' ? (systemScheme === 'dark' ? 'dark' : 'light') : themePref;
   const palette = palettes[resolvedTheme];
@@ -170,8 +190,36 @@ export default function App() {
 
     bootstrap();
 
+    // Add IPC listener for Electron tray controls
+    let ipcListener: any = null;
+    if (ipcRenderer) {
+      ipcListener = (_event: any, action: string) => {
+        switch (action) {
+          case 'toggle':
+            primaryControlRef.current();
+            break;
+          case 'play':
+            trayPlayRef.current();
+            break;
+          case 'stop':
+            stopPlaybackRef.current();
+            break;
+          case 'mute':
+            trayMuteRef.current();
+            break;
+          default:
+            break;
+        }
+      };
+      ipcRenderer.on('playback-control', ipcListener);
+    }
+
     return () => {
       stopPlayback();
+      // Clean up IPC listener
+      if (ipcRenderer && ipcListener) {
+        ipcRenderer.removeListener('playback-control', ipcListener);
+      }
     };
   }, []);
 
@@ -235,6 +283,10 @@ export default function App() {
     }
   };
 
+  useEffect(() => {
+    loadStoredStations();
+  }, []);
+
   const loadStoredStations = async () => {
     try {
       const stored = await AsyncStorage.getItem(STORAGE_KEY);
@@ -251,7 +303,7 @@ export default function App() {
     try {
       await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(next));
     } catch {
-      // ignore persistence errors and keep in-memory list
+      // ignore persistence errors
     }
   };
 
@@ -345,9 +397,8 @@ export default function App() {
     });
     responseListenerRef.current = sub;
     return () => {
-      if (responseListenerRef.current) {
-        Notifications.removeNotificationSubscription(responseListenerRef.current);
-      }
+      // Notification subscription cleanup handled automatically
+      responseListenerRef.current = null;
     };
   }, []);
 
@@ -580,6 +631,100 @@ export default function App() {
   const closeAbout = () => setAboutVisible(false);
   const dismissUnexpectedError = () => setUnexpectedError(null);
 
+  // Auth Handlers
+  const openImportModal = () => {
+    setImportStatus(null);
+    setShowImportModal(true);
+    closeMenu();
+  };
+
+  const handleImportFile = async () => {
+    try {
+      const result = await DocumentPicker.getDocumentAsync({
+        type: Platform.OS === 'web' ? '.m3u,.pls' : ['audio/x-mpegurl', 'audio/mpegurl', 'audio/x-scpls', '*/*'],
+        copyToCacheDirectory: true,
+        multiple: true,
+      });
+
+      if (result.canceled) return;
+
+      const files = result.assets;
+      const allNewStations: Station[] = [];
+
+      for (const file of files) {
+        let content = '';
+
+        if (Platform.OS === 'web') {
+          // On web, read as text directly
+          const response = await fetch(file.uri);
+          content = await response.text();
+        } else {
+          // On mobile, use FileSystem
+          content = await FileSystem.readAsStringAsync(file.uri);
+        }
+
+        const newStations = parsePlaylist(content);
+        allNewStations.push(...newStations);
+      }
+
+      if (allNewStations.length === 0) {
+        setImportStatus('No valid stations found in selected files.');
+        return;
+      }
+
+      const updated = [...stations, ...allNewStations];
+      await persistStations(updated);
+      setImportStatus(`Imported ${allNewStations.length} stations from ${files.length} file${files.length > 1 ? 's' : ''}!`);
+      sendNotification(`Imported ${allNewStations.length} stations`);
+      setTimeout(() => setShowImportModal(false), 1500);
+    } catch (e: any) {
+      setImportStatus(`Error: ${e.message || 'Failed to import file'}`);
+    }
+  };
+
+  const handleExportM3U = async () => {
+    try {
+      const content = generateM3U(stations);
+      await downloadFile(content, 'radiolla_stations.m3u', 'audio/x-mpegurl');
+      setImportStatus('M3U file saved!');
+    } catch (e: any) {
+      setImportStatus(`Error: ${e.message}`);
+    }
+  };
+
+  const handleExportPLS = async () => {
+    try {
+      const content = generatePLS(stations);
+      await downloadFile(content, 'radiolla_stations.pls', 'audio/x-scpls');
+      setImportStatus('PLS file saved!');
+    } catch (e: any) {
+      setImportStatus(`Error: ${e.message}`);
+    }
+  };
+
+  const downloadFile = async (content: string, filename: string, mimeType: string) => {
+    if (Platform.OS === 'web') {
+      // Web: trigger download
+      const blob = new Blob([content], { type: mimeType });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } else {
+      // Mobile: save to cache and share
+      const fileUri = FileSystem.cacheDirectory + filename;
+      await FileSystem.writeAsStringAsync(fileUri, content, { encoding: FileSystem.EncodingType.UTF8 });
+      await Sharing.shareAsync(fileUri, {
+        mimeType,
+        dialogTitle: `Save ${filename}`,
+      });
+    }
+  };
+
   const toggleVolumePanel = () => {
     if (activeStation) {
       setShowVolumePanel((prev) => !prev);
@@ -588,6 +733,10 @@ export default function App() {
 
   const handleVolumeChange = async (newVolume: number) => {
     setVolume(newVolume);
+    setIsMuted(newVolume === 0);
+    if (newVolume > 0) {
+      lastVolumeRef.current = newVolume;
+    }
     if (soundRef.current) {
       try {
         await soundRef.current.setVolumeAsync(newVolume);
@@ -596,6 +745,18 @@ export default function App() {
       }
     }
   };
+
+  const toggleMute = () => {
+    if (isMuted) {
+      void handleVolumeChange(lastVolumeRef.current || 1);
+    } else {
+      if (volume > 0) {
+        lastVolumeRef.current = volume;
+      }
+      void handleVolumeChange(0);
+    }
+  };
+  trayMuteRef.current = toggleMute;
 
   const handlePrimaryControl = () => {
     const target = currentStation || lastStation;
@@ -606,6 +767,16 @@ export default function App() {
       playStation(target);
     }
   };
+  primaryControlRef.current = handlePrimaryControl;
+
+  const startTrayPlay = () => {
+    if (playbackState === 'playing' || playbackState === 'loading') return;
+    const stationToPlay = currentStation || lastStation || stations[0];
+    if (stationToPlay) {
+      playStation(stationToPlay);
+    }
+  };
+  trayPlayRef.current = startTrayPlay;
 
   const activeStation = currentStation || lastStation;
   let statusLabel = 'Ready';
@@ -621,167 +792,185 @@ export default function App() {
   return (
     <SafeAreaView style={styles.container}>
       <StatusBar style={statusBarStyle} />
-      <View style={styles.topBar}>
-        <View>
-          <Text style={styles.heading}>Radiolla</Text>
-          <Text style={styles.headingBadge}>Absolute Freakout</Text>
-        </View>
-        <TouchableOpacity style={styles.menuButton} onPress={toggleMenu} activeOpacity={0.8}>
-          <View style={styles.menuIconLine} />
-          <View style={styles.menuIconLine} />
-          <View style={styles.menuIconLine} />
-        </TouchableOpacity>
-      </View>
 
-      {menuOpen && (
-        <>
-          <TouchableOpacity style={styles.menuBackdrop} activeOpacity={1} onPress={closeMenu} />
-          <View style={styles.menuPanel}>
-            <ScrollView contentContainerStyle={styles.menuContent} showsVerticalScrollIndicator={false} bounces={false}>
-              <Pressable
-                style={({ hovered, pressed }) => [
-                  styles.menuItem,
-                  (hovered || pressed) && styles.menuItemActive,
-                ]}
-                onPress={openAddModal}
-              >
-                <Text style={styles.menuItemLabel}>Add station</Text>
-              </Pressable>
-              <View style={styles.menuDivider} />
-              <Pressable
-                style={({ hovered, pressed }) => [
-                  styles.menuItem,
-                  (hovered || pressed) && styles.menuItemActive,
-                ]}
-                onPress={() => setThemeMenuOpen((prev) => !prev)}
-              >
-                <View style={styles.menuItemRow}>
-                  <Text style={styles.menuItemLabel}>Theme</Text>
-                  <Text style={styles.menuItemHint}>{themeMenuOpen ? 'v' : '>'}</Text>
-                </View>
-              </Pressable>
-              {themeMenuOpen ? (
-                <View style={styles.submenu}>
-                  <Text style={styles.menuSectionLabel}>Theme</Text>
-                  <View style={styles.menuThemeOptions}>
-                    {THEME_OPTIONS.map((option) => {
-                      const active = themePref === option.key;
-                      return (
-                        <Pressable
-                          key={option.key}
-                          onPress={() => updateThemePref(option.key)}
-                          style={({ hovered, pressed }) => [
-                            styles.menuThemeButton,
-                            active && styles.menuThemeButtonActive,
-                            (hovered || pressed) && styles.menuThemeButtonHover,
-                          ]}
-                        >
-                          <Text style={[styles.menuThemeButtonLabel, active && styles.menuThemeButtonLabelActive]}>
-                            {option.label}
-                          </Text>
-                        </Pressable>
-                      );
-                    })}
-                  </View>
-                </View>
-              ) : null}
-              <View style={styles.menuDivider} />
-              <Pressable
-                style={({ hovered, pressed }) => [
-                  styles.menuItem,
-                  (hovered || pressed) && styles.menuItemActive,
-                ]}
-                onPress={openAbout}
-              >
-                <Text style={styles.menuItemLabel}>About</Text>
-              </Pressable>
-            </ScrollView>
-          </View>
-        </>
-      )}
-
-      <KeyboardAvoidingView style={styles.inner} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-        <FlatList
-          data={stations}
-          renderItem={renderStation}
-          keyExtractor={(item) => item.id}
-          extraData={{ contextStationId, currentId: currentStation?.id, playbackState }}
-          contentContainerStyle={styles.list}
-          showsVerticalScrollIndicator={false}
-        />
-      </KeyboardAvoidingView>
-
-      <View style={styles.bottomBar}>
-        <TouchableOpacity
-          style={styles.nowPlayingInfo}
-          onPress={toggleVolumePanel}
-          activeOpacity={activeStation ? 0.7 : 1}
-          disabled={!activeStation}
-        >
-          <Text style={styles.nowPlayingTitle} numberOfLines={1} ellipsizeMode="tail">
-            {activeStation ? activeStation.name : 'No station selected'}
-          </Text>
-          <Text style={styles.nowPlayingSubtitle} numberOfLines={1} ellipsizeMode="tail">
-            {statusLabel}
-          </Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          onPress={handlePrimaryControl}
-          disabled={!activeStation}
-          style={[
-            styles.button,
-            playbackState === 'playing' || playbackState === 'loading' ? styles.secondaryButton : styles.primaryButton,
-            styles.controlButton,
-            !activeStation && styles.disabledButton,
-          ]}
-          accessibilityLabel={playbackState === 'playing' || playbackState === 'loading' ? 'Stop' : 'Play'}
-        >
-          <Text style={styles.controlIcon}>{controlIcon}</Text>
-        </TouchableOpacity>
-      </View>
-
-      {showVolumePanel && activeStation && (
-        <View style={styles.volumePanel}>
-          <View style={styles.volumeHeader}>
-            <Text style={styles.volumeLabel}>Volume</Text>
-            <Text style={styles.volumeValue}>{Math.round(volume * 100)}%</Text>
-          </View>
-          <View style={styles.volumeSliderContainer}>
-            <TouchableOpacity onPress={() => handleVolumeChange(0)} style={styles.volumeIcon}>
-              <Text style={styles.volumeIconText}>🔈</Text>
-            </TouchableOpacity>
-            <View style={styles.volumeTrack}>
-              <View style={[styles.volumeFill, { width: `${volume * 100}%` }]} />
-              <Pressable
-                style={styles.volumeSliderTouch}
-                onPress={(e) => {
-                  const { locationX } = e.nativeEvent;
-                  const trackWidth = 200;
-                  const newVolume = Math.max(0, Math.min(1, locationX / trackWidth));
-                  handleVolumeChange(newVolume);
-                }}
-              />
+      <View style={styles.webWrapper}>
+        <View style={styles.appFrame}>
+          <View style={styles.topBar}>
+            <View>
+              <Text style={styles.heading}>Radiolla</Text>
+              <Text style={styles.headingBadge}>Absolute Freakout</Text>
             </View>
-            <TouchableOpacity onPress={() => handleVolumeChange(1)} style={styles.volumeIcon}>
-              <Text style={styles.volumeIconText}>🔊</Text>
+            <TouchableOpacity style={styles.menuButton} onPress={toggleMenu} activeOpacity={0.8}>
+              <View style={styles.menuIconLine} />
+              <View style={styles.menuIconLine} />
+              <View style={styles.menuIconLine} />
             </TouchableOpacity>
           </View>
-          <View style={styles.volumePresets}>
-            {[0, 0.25, 0.5, 0.75, 1].map((preset) => (
-              <TouchableOpacity
-                key={preset}
-                style={[styles.volumePreset, Math.abs(volume - preset) < 0.05 && styles.volumePresetActive]}
-                onPress={() => handleVolumeChange(preset)}
-              >
-                <Text style={styles.volumePresetLabel}>{Math.round(preset * 100)}%</Text>
-              </TouchableOpacity>
-            ))}
+
+          {menuOpen && (
+            <>
+              <TouchableOpacity style={styles.menuBackdrop} activeOpacity={1} onPress={closeMenu} />
+              <View style={styles.menuPanel}>
+                <ScrollView contentContainerStyle={styles.menuContent} showsVerticalScrollIndicator={false} bounces={false}>
+                  {/* Removed User Email Header */}
+
+                  <Pressable
+                    style={({ hovered, pressed }) => [
+                      styles.menuItem,
+                      (hovered || pressed) && styles.menuItemActive,
+                    ]}
+                    onPress={openAddModal}
+                  >
+                    <Text style={styles.menuItemLabel}>Add station</Text>
+                  </Pressable>
+                  <View style={styles.menuDivider} />
+                  <Pressable
+                    style={({ hovered, pressed }) => [
+                      styles.menuItem,
+                      (hovered || pressed) && styles.menuItemActive,
+                    ]}
+                    onPress={openImportModal}
+                  >
+                    <Text style={styles.menuItemLabel}>Import / Export</Text>
+                  </Pressable>
+                  <View style={styles.menuDivider} />
+                  <Pressable
+                    style={({ hovered, pressed }) => [
+                      styles.menuItem,
+                      (hovered || pressed) && styles.menuItemActive,
+                    ]}
+                    onPress={() => setThemeMenuOpen((prev) => !prev)}
+                  >
+                    <View style={styles.menuItemRow}>
+                      <Text style={styles.menuItemLabel}>Theme</Text>
+                      <Text style={styles.menuItemHint}>{themeMenuOpen ? 'v' : '>'}</Text>
+                    </View>
+                  </Pressable>
+                  {themeMenuOpen ? (
+                    <View style={styles.submenu}>
+                      <Text style={styles.menuSectionLabel}>Theme</Text>
+                      <View style={styles.menuThemeOptions}>
+                        {THEME_OPTIONS.map((option) => {
+                          const active = themePref === option.key;
+                          return (
+                            <Pressable
+                              key={option.key}
+                              onPress={() => updateThemePref(option.key)}
+                              style={({ hovered, pressed }) => [
+                                styles.menuThemeButton,
+                                active && styles.menuThemeButtonActive,
+                                (hovered || pressed) && styles.menuThemeButtonHover,
+                              ]}
+                            >
+                              <Text style={[styles.menuThemeButtonLabel, active && styles.menuThemeButtonLabelActive]}>
+                                {option.label}
+                              </Text>
+                            </Pressable>
+                          );
+                        })}
+                      </View>
+                    </View>
+                  ) : null}
+                  <View style={styles.menuDivider} />
+                  <Pressable
+                    style={({ hovered, pressed }) => [
+                      styles.menuItem,
+                      (hovered || pressed) && styles.menuItemActive,
+                    ]}
+                    onPress={openAbout}
+                  >
+                    <Text style={styles.menuItemLabel}>About</Text>
+                  </Pressable>
+
+                </ScrollView>
+              </View>
+            </>
+          )}
+
+          <KeyboardAvoidingView style={styles.inner} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+            <FlatList
+              data={stations}
+              renderItem={renderStation}
+              keyExtractor={(item) => item.id}
+              extraData={{ contextStationId, currentId: currentStation?.id, playbackState }}
+              contentContainerStyle={styles.list}
+              showsVerticalScrollIndicator={false}
+            />
+          </KeyboardAvoidingView>
+
+          <View style={styles.bottomBar}>
+            <TouchableOpacity
+              style={styles.nowPlayingInfo}
+              onPress={toggleVolumePanel}
+              activeOpacity={activeStation ? 0.7 : 1}
+              disabled={!activeStation}
+            >
+              <Text style={styles.nowPlayingTitle} numberOfLines={1} ellipsizeMode="tail">
+                {activeStation ? activeStation.name : 'No station selected'}
+              </Text>
+              <Text style={styles.nowPlayingSubtitle} numberOfLines={1} ellipsizeMode="tail">
+                {statusLabel}
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={handlePrimaryControl}
+              disabled={!activeStation}
+              style={[
+                styles.button,
+                playbackState === 'playing' || playbackState === 'loading' ? styles.secondaryButton : styles.primaryButton,
+                styles.controlButton,
+                !activeStation && styles.disabledButton,
+              ]}
+              accessibilityLabel={playbackState === 'playing' || playbackState === 'loading' ? 'Stop' : 'Play'}
+            >
+              <Text style={styles.controlIcon}>{controlIcon}</Text>
+            </TouchableOpacity>
           </View>
-          <TouchableOpacity style={styles.volumeClose} onPress={() => setShowVolumePanel(false)}>
-            <Text style={styles.volumeCloseLabel}>Done</Text>
-          </TouchableOpacity>
+
+          {showVolumePanel && activeStation && (
+            <View style={styles.volumePanel}>
+              <View style={styles.volumeHeader}>
+                <Text style={styles.volumeLabel}>Volume</Text>
+                <Text style={styles.volumeValue}>{Math.round(volume * 100)}%</Text>
+              </View>
+              <View style={styles.volumeSliderContainer}>
+                <TouchableOpacity onPress={() => handleVolumeChange(0)} style={styles.volumeIcon}>
+                  <Text style={styles.volumeIconText}>🔈</Text>
+                </TouchableOpacity>
+                <View style={styles.volumeTrack}>
+                  <View style={[styles.volumeFill, { width: `${volume * 100}%` }]} />
+                  <Pressable
+                    style={styles.volumeSliderTouch}
+                    onPress={(e) => {
+                      const { locationX } = e.nativeEvent;
+                      const trackWidth = 200;
+                      const newVolume = Math.max(0, Math.min(1, locationX / trackWidth));
+                      handleVolumeChange(newVolume);
+                    }}
+                  />
+                </View>
+                <TouchableOpacity onPress={() => handleVolumeChange(1)} style={styles.volumeIcon}>
+                  <Text style={styles.volumeIconText}>🔊</Text>
+                </TouchableOpacity>
+              </View>
+              <View style={styles.volumePresets}>
+                {[0, 0.25, 0.5, 0.75, 1].map((preset) => (
+                  <TouchableOpacity
+                    key={preset}
+                    style={[styles.volumePreset, Math.abs(volume - preset) < 0.05 && styles.volumePresetActive]}
+                    onPress={() => handleVolumeChange(preset)}
+                  >
+                    <Text style={styles.volumePresetLabel}>{Math.round(preset * 100)}%</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+              <TouchableOpacity style={styles.volumeClose} onPress={() => setShowVolumePanel(false)}>
+                <Text style={styles.volumeCloseLabel}>Done</Text>
+              </TouchableOpacity>
+            </View>
+          )}
         </View>
-      )}
+      </View>
 
       <Modal visible={showAddModal} animationType="slide" transparent onRequestClose={closeStationModal}>
         <View style={styles.modalBackdrop}>
@@ -863,7 +1052,40 @@ export default function App() {
             </TouchableOpacity>
           </View>
         </View>
+
       </Modal>
+
+      <Modal visible={showImportModal} animationType="slide" transparent onRequestClose={() => setShowImportModal(false)}>
+        <View style={styles.modalBackdrop}>
+          <View style={styles.modalCard}>
+            <Text style={styles.modalTitle}>Import / Export</Text>
+            <Text style={styles.cardSubtitle}>Import M3U/PLS files or export your stations.</Text>
+
+            {importStatus ? <Text style={{ color: '#10b981', marginVertical: 10, textAlign: 'center' }}>{importStatus}</Text> : null}
+
+            <TouchableOpacity style={[styles.button, styles.primaryButton, { marginBottom: 10 }]} onPress={handleImportFile}>
+              <Text style={styles.buttonLabel}>📂 Import File (M3U/PLS)</Text>
+            </TouchableOpacity>
+
+            <View style={{ flexDirection: 'row', gap: 10, marginBottom: 10 }}>
+              <TouchableOpacity style={[styles.button, styles.secondaryButton, { flex: 1 }]} onPress={handleExportM3U}>
+                <Text style={styles.buttonLabel}>Save M3U</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={[styles.button, styles.secondaryButton, { flex: 1 }]} onPress={handleExportPLS}>
+                <Text style={styles.buttonLabel}>Save PLS</Text>
+              </TouchableOpacity>
+            </View>
+
+            <TouchableOpacity
+              style={{ alignSelf: 'center', marginTop: 5 }}
+              onPress={() => setShowImportModal(false)}
+            >
+              <Text style={styles.cardSubtitle}>Close</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
     </SafeAreaView>
   );
 }
@@ -872,7 +1094,20 @@ const createStyles = (palette: Palette) =>
   StyleSheet.create({
     container: {
       flex: 1,
+      backgroundColor: Platform.OS === 'web' ? '#000' : palette.background, // Darker bg for web outer
+    },
+    webWrapper: {
+      flex: 1,
+      alignItems: 'center',
+      justifyContent: 'center',
+      width: '100%',
+    },
+    appFrame: {
+      flex: 1,
+      width: '100%',
+      maxWidth: 500,
       backgroundColor: palette.background,
+      overflow: 'hidden',
     },
     topBar: {
       flexDirection: 'row',
@@ -947,12 +1182,64 @@ const createStyles = (palette: Palette) =>
       paddingBottom: 4,
     },
     menuItem: {
-      paddingVertical: 6,
+      paddingVertical: 8,
       borderRadius: 6,
-      paddingHorizontal: 8,
+      paddingHorizontal: 10,
     },
     menuItemActive: {
       backgroundColor: palette.accentSoft,
+    },
+    menuItemDestructive: {
+      marginTop: 4,
+      backgroundColor: palette.destructiveSoft,
+      borderWidth: 1,
+      borderColor: palette.destructiveStrong,
+      borderStyle: 'dashed',
+    },
+    menuItemDestructiveActive: {
+      backgroundColor: palette.destructiveStrong,
+    },
+    menuItemPrimary: {
+      marginTop: 4,
+      backgroundColor: palette.accentSoft,
+      borderWidth: 1,
+      borderColor: palette.accentStrong,
+      borderStyle: 'dashed',
+    },
+    menuItemPrimaryActive: {
+      backgroundColor: palette.accentStrong,
+    },
+    menuItemLabel: {
+      color: palette.textPrimary,
+      fontFamily: fonts.bold,
+      fontSize: 14,
+    },
+    destructiveLabel: {
+      color: '#b02a3c',
+    },
+    primaryLabel: {
+      color: palette.textPrimary,
+    },
+    menuHeader: {
+      paddingBottom: 4,
+      gap: 2,
+    },
+    menuHeaderLabel: {
+      fontSize: 10,
+      textTransform: 'uppercase',
+      color: palette.textSecondary,
+      fontFamily: fonts.medium,
+      letterSpacing: 0.5,
+    },
+    menuHeaderEmail: {
+      fontSize: 13,
+      color: palette.textPrimary,
+      fontFamily: fonts.bold,
+      marginBottom: 4,
+    },
+    menuSpacer: {
+      flex: 1,
+      minHeight: 10,
     },
     menuItemRow: {
       flexDirection: 'row',
@@ -964,11 +1251,6 @@ const createStyles = (palette: Palette) =>
       color: palette.textSecondary,
       fontFamily: fonts.medium,
       fontSize: 12,
-    },
-    menuItemLabel: {
-      color: palette.textPrimary,
-      fontFamily: fonts.bold,
-      fontSize: 14,
     },
     menuSection: {
       gap: 6,

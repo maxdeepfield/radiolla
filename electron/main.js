@@ -2,7 +2,7 @@ const path = require('path');
 const fs = require('fs');
 const http = require('http');
 const url = require('url');
-const { app, BrowserWindow, shell, Tray, Menu } = require('electron');
+const { app, BrowserWindow, shell, Tray, Menu, ipcMain } = require('electron');
 
 const mimeTypes = {
   '.css': 'text/css',
@@ -27,6 +27,29 @@ let mainWindow;
 const iconFileName = process.platform === 'win32' ? 'radiolla_icon.ico' : 'radiolla_icon.png';
 const STATIC_HOST = '127.0.0.1';
 const STATIC_PORT = 19573;
+
+// Window state persistence
+const getWindowStatePath = () => path.join(app.getPath('userData'), 'window-state.json');
+
+const loadWindowState = () => {
+  try {
+    const data = fs.readFileSync(getWindowStatePath(), 'utf8');
+    return JSON.parse(data);
+  } catch {
+    return null;
+  }
+};
+
+const saveWindowState = (win) => {
+  if (!win || win.isDestroyed()) return;
+  const bounds = win.getBounds();
+  const state = { x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height };
+  try {
+    fs.writeFileSync(getWindowStatePath(), JSON.stringify(state));
+  } catch (err) {
+    console.error('Failed to save window state', err);
+  }
+};
 
 const startStaticServer = (rootDir) =>
   new Promise((resolve, reject) => {
@@ -116,10 +139,18 @@ const createTray = (win) => {
       },
     },
     {
-      label: 'Play/Pause',
+      label: 'Play',
       click: () => {
         if (mainWindow && !mainWindow.isDestroyed()) {
-          mainWindow.webContents.send('playback-control', 'toggle');
+          mainWindow.webContents.send('playback-control', 'play');
+        }
+      }
+    },
+    {
+      label: 'Mute',
+      click: () => {
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('playback-control', 'mute');
         }
       }
     },
@@ -159,21 +190,29 @@ const createTray = (win) => {
 };
 
 const createWindow = async () => {
+  const savedState = loadWindowState();
 
   // Create main window but keep it hidden initially
   const win = new BrowserWindow({
-    width: 390,
-    height: 600,
+    width: savedState?.width || 390,
+    height: savedState?.height || 600,
+    x: savedState?.x,
+    y: savedState?.y,
     maxHeight: 600,
     title: 'Radiolla',
     icon: path.join(__dirname, '..', 'assets', iconFileName),
     show: false, // Don't show until ready
     backgroundColor: '#0f1220', // Match app dark background to avoid white flash
     webPreferences: {
-      contextIsolation: true,
+      contextIsolation: false,
+      nodeIntegration: true,
     },
   });
   mainWindow = win;
+
+  // Save window state on move/resize
+  win.on('moved', () => saveWindowState(win));
+  win.on('resized', () => saveWindowState(win));
 
   // Remove the default menu bar from the main window.
   win.setMenu(null);
@@ -226,10 +265,17 @@ const createWindow = async () => {
         throw err;
       }
     });
-  win.center();
+  if (!savedState) win.center();
   win.show();
   // Start loading the main app after the spinner has been displayed.
   loadMainContent();
+
+  win.webContents.once('dom-ready', () => {
+    // Expose ipcRenderer to the renderer process
+    win.webContents.executeJavaScript(`
+      window.ipcRenderer = require('electron').ipcRenderer;
+    `);
+  });
 
   win.webContents.setWindowOpenHandler(({ url }) => {
     shell.openExternal(url);
