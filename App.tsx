@@ -8,7 +8,6 @@ import {
   Platform,
   Pressable,
   ScrollView,
-  SafeAreaView,
   StyleSheet,
   Text,
   TextInput,
@@ -16,7 +15,14 @@ import {
   useColorScheme,
   View,
   Linking,
+  StatusBar as RNStatusBar,
 } from 'react-native';
+
+// Safe area insets for edge-to-edge mode
+const INSETS = {
+  top: Platform.OS === 'android' ? (RNStatusBar.currentHeight || 24) : 0,
+  bottom: Platform.OS === 'android' ? 24 : 0, // Android gesture nav bar height
+};
 import { Audio, InterruptionModeAndroid, InterruptionModeIOS } from 'expo-av';
 import * as Notifications from 'expo-notifications';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -174,54 +180,68 @@ export default function App() {
 
   useEffect(() => {
     const bootstrap = async () => {
-      await Audio.setAudioModeAsync({
-        allowsRecordingIOS: false,
-        staysActiveInBackground: true,
-        playsInSilentModeIOS: true,
-        shouldDuckAndroid: true,
-        playThroughEarpieceAndroid: false,
-        interruptionModeAndroid: InterruptionModeAndroid.DuckOthers,
-        interruptionModeIOS: InterruptionModeIOS.DuckOthers,
-      });
-      await ensureNotificationPermissions();
-      await loadStoredStations();
-      await loadThemePref();
+      try {
+        if (typeof Audio?.setAudioModeAsync === 'function') {
+          await Audio.setAudioModeAsync({
+            allowsRecordingIOS: false,
+            staysActiveInBackground: true,
+            playsInSilentModeIOS: true,
+            shouldDuckAndroid: true,
+            playThroughEarpieceAndroid: false,
+            interruptionModeAndroid: InterruptionModeAndroid.DuckOthers,
+            interruptionModeIOS: InterruptionModeIOS.DuckOthers,
+          });
+        }
+        await ensureNotificationPermissions();
+        await loadStoredStations();
+        await loadThemePref();
+      } catch (e) {
+        console.warn('Bootstrap failed:', e);
+      }
     };
 
     bootstrap();
 
     // Add IPC listener for Electron tray controls
     let ipcListener: any = null;
-    if (ipcRenderer) {
-      ipcListener = (_event: any, action: string) => {
-        switch (action) {
-          case 'toggle':
-            primaryControlRef.current();
-            break;
-          case 'play':
-            trayPlayRef.current();
-            break;
-          case 'stop':
-            stopPlaybackRef.current();
-            break;
-          case 'mute':
-            trayMuteRef.current();
-            break;
-          default:
-            break;
-        }
-      };
-      ipcRenderer.on('playback-control', ipcListener);
+    try {
+      if (ipcRenderer && typeof ipcRenderer.on === 'function') {
+        ipcListener = (_event: any, action: string) => {
+          switch (action) {
+            case 'toggle':
+              primaryControlRef.current();
+              break;
+            case 'play':
+              trayPlayRef.current();
+              break;
+            case 'stop':
+              stopPlaybackRef.current();
+              break;
+            case 'mute':
+              trayMuteRef.current();
+              break;
+            default:
+              break;
+          }
+        };
+        ipcRenderer.on('playback-control', ipcListener);
+      }
+    } catch (e) {
+      console.warn('IPC setup failed:', e);
     }
 
     return () => {
       stopPlayback();
       // Clean up IPC listener
-    if (ipcRenderer && ipcListener) {
-      ipcRenderer.removeListener('playback-control', ipcListener);
-    }
-  };
-}, []);
+      try {
+        if (ipcRenderer && ipcListener && typeof ipcRenderer.removeListener === 'function') {
+          ipcRenderer.removeListener('playback-control', ipcListener);
+        }
+      } catch (e) {
+        // Ignore cleanup errors
+      }
+    };
+  }, []);
 
   useEffect(() => {
     if (ipcRenderer?.send) {
@@ -229,63 +249,85 @@ export default function App() {
     }
   }, [isMuted]);
 
+  // Sync playback state to Electron tray
   useEffect(() => {
-    const globalErrorUtils = (globalThis as any).ErrorUtils;
-    let previousHandler: ((error: Error, isFatal?: boolean) => void) | null = null;
-    if (globalErrorUtils?.getGlobalHandler && globalErrorUtils?.setGlobalHandler) {
-      previousHandler = globalErrorUtils.getGlobalHandler();
-      globalErrorUtils.setGlobalHandler((error: Error, isFatal?: boolean) => {
-        setUnexpectedError(error?.message ?? 'Something went wrong.');
-        if (previousHandler) {
-          previousHandler(error, isFatal);
+    if (ipcRenderer?.send) {
+      ipcRenderer.send('playback-state', playbackState);
+    }
+  }, [playbackState]);
+
+  useEffect(() => {
+    try {
+      const globalErrorUtils = (globalThis as any).ErrorUtils;
+      let previousHandler: ((error: Error, isFatal?: boolean) => void) | null = null;
+      if (globalErrorUtils && typeof globalErrorUtils.getGlobalHandler === 'function' && typeof globalErrorUtils.setGlobalHandler === 'function') {
+        previousHandler = globalErrorUtils.getGlobalHandler();
+        globalErrorUtils.setGlobalHandler((error: Error, isFatal?: boolean) => {
+          setUnexpectedError(error?.message ?? 'Something went wrong.');
+          if (previousHandler) {
+            previousHandler(error, isFatal);
+          }
+        });
+      }
+
+      const handleWindowError = (event: any) => {
+        setUnexpectedError(event?.error?.message ?? event?.message ?? 'Something went wrong.');
+      };
+      const handleRejection = (event: any) => {
+        const reason = event?.reason?.message ?? String(event?.reason ?? '');
+        setUnexpectedError(reason || 'Something went wrong.');
+      };
+      if (typeof window !== 'undefined' && window.addEventListener) {
+        window.addEventListener('error', handleWindowError);
+        window.addEventListener('unhandledrejection', handleRejection);
+      }
+
+      return () => {
+        try {
+          if (globalErrorUtils && typeof globalErrorUtils.setGlobalHandler === 'function' && previousHandler) {
+            globalErrorUtils.setGlobalHandler(previousHandler);
+          }
+          if (typeof window !== 'undefined' && window.removeEventListener) {
+            window.removeEventListener('error', handleWindowError);
+            window.removeEventListener('unhandledrejection', handleRejection);
+          }
+        } catch (e) {
+          // Ignore cleanup errors
         }
-      });
+      };
+    } catch (e) {
+      console.warn('Error handler setup failed:', e);
     }
-
-    const handleWindowError = (event: any) => {
-      setUnexpectedError(event?.error?.message ?? event?.message ?? 'Something went wrong.');
-    };
-    const handleRejection = (event: any) => {
-      const reason = event?.reason?.message ?? String(event?.reason ?? '');
-      setUnexpectedError(reason || 'Something went wrong.');
-    };
-    if (typeof window !== 'undefined') {
-      window.addEventListener('error', handleWindowError);
-      window.addEventListener('unhandledrejection', handleRejection);
-    }
-
-    return () => {
-      if (globalErrorUtils?.setGlobalHandler && previousHandler) {
-        globalErrorUtils.setGlobalHandler(previousHandler);
-      }
-      if (typeof window !== 'undefined') {
-        window.removeEventListener('error', handleWindowError);
-        window.removeEventListener('unhandledrejection', handleRejection);
-      }
-    };
   }, []);
 
   const ensureNotificationPermissions = async () => {
-    const existing = await Notifications.getPermissionsAsync();
-    if (existing.status !== 'granted') {
-      const requested = await Notifications.requestPermissionsAsync();
-      setNotificationsAllowed(requested.status === 'granted');
-    } else {
-      setNotificationsAllowed(true);
-    }
+    try {
+      const existing = await Notifications.getPermissionsAsync();
+      if (existing.status !== 'granted') {
+        const requested = await Notifications.requestPermissionsAsync();
+        setNotificationsAllowed(requested.status === 'granted');
+      } else {
+        setNotificationsAllowed(true);
+      }
 
-    if (Platform.OS === 'android') {
-      await Notifications.setNotificationChannelAsync('playback', {
-        name: 'Playback',
-        importance: Notifications.AndroidImportance.DEFAULT,
-      });
-      await Notifications.setNotificationCategoryAsync(PLAYBACK_CATEGORY_ID, [
-        {
-          identifier: STOP_ACTION_ID,
-          buttonTitle: 'Stop',
-          options: { isDestructive: true },
-        },
-      ]);
+      if (Platform.OS === 'android') {
+        await Notifications.setNotificationChannelAsync('playback', {
+          name: 'Playback',
+          importance: Notifications.AndroidImportance.DEFAULT,
+        });
+        if (typeof Notifications.setNotificationCategoryAsync === 'function') {
+          await Notifications.setNotificationCategoryAsync(PLAYBACK_CATEGORY_ID, [
+            {
+              identifier: STOP_ACTION_ID,
+              buttonTitle: 'Stop',
+              options: { isDestructive: true },
+            },
+          ]);
+        }
+      }
+    } catch (e) {
+      // Ignore notification setup errors - app can still function without notifications
+      console.warn('Notification setup failed:', e);
     }
   };
 
@@ -396,23 +438,33 @@ export default function App() {
   stopPlaybackRef.current = stopPlayback;
 
   useEffect(() => {
-    const sub = Notifications.addNotificationResponseReceivedListener((response) => {
-      if (response.actionIdentifier === STOP_ACTION_ID) {
-        stopPlaybackRef.current();
+    let sub: ReturnType<typeof Notifications.addNotificationResponseReceivedListener> | null = null;
+    try {
+      if (typeof Notifications.addNotificationResponseReceivedListener === 'function') {
+        sub = Notifications.addNotificationResponseReceivedListener((response) => {
+          if (response.actionIdentifier === STOP_ACTION_ID) {
+            stopPlaybackRef.current();
+          }
+        });
+        responseListenerRef.current = sub;
       }
-    });
-    responseListenerRef.current = sub;
+    } catch (e) {
+      // Ignore notification listener errors in release builds
+      console.warn('Failed to add notification listener:', e);
+    }
     return () => {
-      // Notification subscription cleanup handled automatically
+      if (sub?.remove) {
+        sub.remove();
+      }
       responseListenerRef.current = null;
     };
   }, []);
 
   if (!fontsLoaded) {
     return (
-      <SafeAreaView style={styles.container}>
+      <View style={styles.container}>
         <StatusBar style="dark" />
-      </SafeAreaView>
+      </View>
     );
   }
 
@@ -796,12 +848,12 @@ export default function App() {
   const controlIcon = playbackState === 'playing' || playbackState === 'loading' ? '■' : '▶';
 
   return (
-    <SafeAreaView style={styles.container}>
+    <View style={styles.container}>
       <StatusBar style={statusBarStyle} />
 
       <View style={styles.webWrapper}>
         <View style={styles.appFrame}>
-          <View style={styles.topBar}>
+          <View style={[styles.topBar, { paddingTop: INSETS.top + 6 }]}>
             <View>
               <Text style={styles.heading}>Radiolla</Text>
               <Text style={styles.headingBadge}>Absolute Freakout</Text>
@@ -904,7 +956,7 @@ export default function App() {
             />
           </KeyboardAvoidingView>
 
-          <View style={styles.bottomBar}>
+          <View style={[styles.bottomBar, { paddingBottom: INSETS.bottom + 8 }]}>
             <TouchableOpacity
               style={styles.nowPlayingInfo}
               onPress={toggleVolumePanel}
@@ -1092,7 +1144,7 @@ export default function App() {
         </View>
       </Modal>
 
-    </SafeAreaView>
+    </View>
   );
 }
 

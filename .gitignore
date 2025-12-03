@@ -1,44 +1,65 @@
-# Learn more https://docs.github.com/en/get-started/getting-started-with-git/ignoring-files
+# Operating system artifacts
+.DS_Store
+Thumbs.db
+ehthumbs.db
+Desktop.ini
 
-# dependencies
+# Logs and debug outputs
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
+lerna-debug.log*
+yarn-error.log*
+*.log
+
+# Node modules
 node_modules/
-release/
-.history/
-.vscode/
 
-# Expo
+# Expo build artifacts
 .expo/
-dist/
 web-build/
+dist/
+release/
 expo-env.d.ts
 
-# Native
-.kotlin/
+# Native / React Native build artifacts
+android/
+ios/
 *.orig.*
 *.jks
 *.p8
 *.p12
 *.key
+*.pem
 *.mobileprovision
-
-# Metro
+*.keystore
 .metro-health-check*
 
-# debug
-npm-debug.*
-yarn-debug.*
-yarn-error.*
-
-# macOS
-.DS_Store
-*.pem
-
-# local env files
-.env*.local
-
-# typescript
+# TypeScript caches
 *.tsbuildinfo
 
-# generated native folders
-/ios
-/android
+# Electron build folders
+electron/build/
+electron/dist/
+
+# IDEs and editors
+.vscode/
+.idea/
+.history/
+.kiro/
+.zencoder/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.xcodeproj
+*.xcworkspace
+
+# Environment files
+.env
+.env.*
+.env.*.local
+
+# Miscellaneous
+crash_full.txt
+*Zone.Identifier

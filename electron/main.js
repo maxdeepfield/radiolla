@@ -26,6 +26,7 @@ let tray;
 let mainWindow;
 let muteMenuItem = null;
 let pendingMuteState = null;
+let isPlaying = false;
 const iconFileName = process.platform === 'win32' ? 'radiolla_icon.ico' : 'radiolla_icon.png';
 const STATIC_HOST = '127.0.0.1';
 const STATIC_PORT = 19573;
@@ -125,12 +126,8 @@ const stopStaticServer = () => {
   }
 };
 
-const createTray = (win) => {
-  if (tray) return tray;
-  const iconPath = path.join(__dirname, '..', 'assets', iconFileName);
-  tray = new Tray(iconPath);
-  tray.setToolTip('Radiolla');
-  const menu = Menu.buildFromTemplate([
+const buildTrayMenu = (win) => {
+  return Menu.buildFromTemplate([
     {
       label: 'Show',
       click: () => {
@@ -141,10 +138,10 @@ const createTray = (win) => {
       },
     },
     {
-      label: 'Play',
+      label: isPlaying ? '⏹ Stop' : '▶ Play',
       click: () => {
         if (mainWindow && !mainWindow.isDestroyed()) {
-          mainWindow.webContents.send('playback-control', 'play');
+          mainWindow.webContents.send('playback-control', isPlaying ? 'stop' : 'play');
         }
       }
     },
@@ -152,21 +149,14 @@ const createTray = (win) => {
       label: 'Mute',
       id: 'tray-mute',
       type: 'checkbox',
-      checked: false,
+      checked: Boolean(pendingMuteState),
       click: () => {
         if (mainWindow && !mainWindow.isDestroyed()) {
           mainWindow.webContents.send('playback-control', 'mute');
         }
       }
     },
-    {
-      label: 'Stop',
-      click: () => {
-        if (mainWindow && !mainWindow.isDestroyed()) {
-          mainWindow.webContents.send('playback-control', 'stop');
-        }
-      }
-    },
+    { type: 'separator' },
     {
       label: 'Always on top',
       type: 'checkbox',
@@ -184,8 +174,21 @@ const createTray = (win) => {
       },
     },
   ]);
+};
+
+const updateTrayMenu = () => {
+  if (!tray || !mainWindow) return;
+  const menu = buildTrayMenu(mainWindow);
   tray.setContextMenu(menu);
-  registerMuteMenuItem(menu);
+  muteMenuItem = menu.getMenuItemById('tray-mute');
+};
+
+const createTray = (win) => {
+  if (tray) return tray;
+  const iconPath = path.join(__dirname, '..', 'assets', iconFileName);
+  tray = new Tray(iconPath);
+  tray.setToolTip('Radiolla');
+  updateTrayMenu();
   tray.on('click', () => {
     if (!win.isDestroyed()) {
       win.show();
@@ -197,16 +200,12 @@ const createTray = (win) => {
 
 const applyMuteStateToMenu = (isMuted) => {
   pendingMuteState = isMuted;
-  if (muteMenuItem) {
-    muteMenuItem.checked = Boolean(isMuted);
-  }
+  updateTrayMenu();
 };
 
-const registerMuteMenuItem = (menu) => {
-  muteMenuItem = menu.getMenuItemById('tray-mute');
-  if (muteMenuItem && typeof pendingMuteState === 'boolean') {
-    muteMenuItem.checked = pendingMuteState;
-  }
+const applyPlaybackStateToMenu = (playing) => {
+  isPlaying = playing;
+  updateTrayMenu();
 };
 
 const createWindow = async () => {
@@ -323,6 +322,11 @@ ipcMain.on('playback-mute-state', (_event, payload) => {
   if (typeof next === 'boolean') {
     applyMuteStateToMenu(next);
   }
+});
+
+ipcMain.on('playback-state', (_event, state) => {
+  // state is 'idle' | 'loading' | 'playing'
+  applyPlaybackStateToMenu(state === 'playing' || state === 'loading');
 });
 
 app.whenReady().then(() => {
