@@ -8,12 +8,12 @@
 
 ### Platform-Specific Requirements
 
-| Platform | Requirements |
-|----------|--------------|
-| Android | Java 17 (JDK), Android Studio with SDK |
-| iOS | macOS, Xcode 15+, Apple Developer account |
-| Windows (Electron) | Windows 10/11 |
-| Web | Modern browser |
+| Platform           | Requirements                              |
+| ------------------ | ----------------------------------------- |
+| Android            | Java 17 (JDK), Android Studio with SDK    |
+| iOS                | macOS, Xcode 15+, Apple Developer account |
+| Windows (Electron) | Windows 10/11                             |
+| Web                | Modern browser                            |
 
 ---
 
@@ -35,24 +35,24 @@ npm start
 
 ## Development Commands
 
-| Command | Description |
-|---------|-------------|
-| `npm start` | Start Expo development server |
-| `npm run web` | Start web development server |
-| `npm run android` | Run on Android device/emulator |
-| `npm run ios` | Run on iOS simulator |
-| `npm run electron` | Run desktop app in development |
-| `npm run typecheck` | Run TypeScript type checking |
+| Command             | Description                    |
+| ------------------- | ------------------------------ |
+| `npm start`         | Start Expo development server  |
+| `npm run web`       | Start web development server   |
+| `npm run android`   | Run on Android device/emulator |
+| `npm run ios`       | Run on iOS simulator           |
+| `npm run electron`  | Run desktop app in development |
+| `npm run typecheck` | Run TypeScript type checking   |
 
 ---
 
 ## Build Commands
 
-| Command | Platform | Output |
-|---------|----------|--------|
-| `npm run web:export` | Web | `dist/` folder |
-| `npm run electron:build` | Windows | `release/*.exe` |
-| `npm run android` | Android | Debug APK |
+| Command                  | Platform | Output          |
+| ------------------------ | -------- | --------------- |
+| `npm run web:export`     | Web      | `dist/` folder  |
+| `npm run electron:build` | Windows  | `release/*.exe` |
+| `npm run android`        | Android  | Debug APK       |
 
 ### Android Release Build
 

@@ -3,19 +3,34 @@ const path = require('path');
 const { spawn } = require('child_process');
 const waitOn = require('wait-on');
 
-const expoInfoPath = path.join(__dirname, '..', '.expo', 'dev-server-info.json');
+const expoInfoPath = path.join(
+  __dirname,
+  '..',
+  '.expo',
+  'dev-server-info.json'
+);
 const requestedUrl = process.env.EXPO_WEB_URL;
 const requestedPort = process.env.EXPO_WEB_PORT || process.env.WEB_PORT;
-const electronBin = path.join(__dirname, '..', 'node_modules', '.bin', process.platform === 'win32' ? 'electron.cmd' : 'electron');
-const log = (msg) => console.log(`[electron-dev] ${msg}`);
-const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const electronBin = path.join(
+  __dirname,
+  '..',
+  'node_modules',
+  '.bin',
+  process.platform === 'win32' ? 'electron.cmd' : 'electron'
+);
+const log = msg => console.log(`[electron-dev] ${msg}`);
+const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
 const readUrlFromExpoInfo = () => {
   try {
     const raw = fs.readFileSync(expoInfoPath, 'utf8');
     const info = JSON.parse(raw);
     const host = info.webpackServerHost || info.host || 'localhost';
-    const port = info.webpackServerPort ?? info.expoServerPort ?? info.port ?? info.packagerPort;
+    const port =
+      info.webpackServerPort ??
+      info.expoServerPort ??
+      info.port ??
+      info.packagerPort;
     if (!port) return null;
     const protocol = info.https ? 'https' : 'http';
     return `${protocol}://${host}:${port}`;
@@ -31,10 +46,10 @@ const waitForUrl = (url, timeoutMs = 45000) =>
         resources: [url],
         timeout: timeoutMs,
       },
-      (err) => {
+      err => {
         if (err) return reject(err);
         return resolve(url);
-      },
+      }
     );
   });
 
@@ -94,11 +109,11 @@ const resolveTargetUrl = async () => {
   throw new Error(
     `Expo web dev server not reachable. Tried: ${Array.from(seen).join(', ')}${
       lastError ? ` (${lastError.message})` : ''
-    }`,
+    }`
   );
 };
 
-const spawnElectron = (url) => {
+const spawnElectron = url => {
   const mainPath = path.join(__dirname, 'main.js');
   const env = { ...process.env, EXPO_WEB_URL: url };
   // Ensure we don't accidentally inherit Electron's "run as node" flag from the shell.
@@ -118,13 +133,13 @@ const spawnElectron = (url) => {
     log(`Starting Electron pointed at ${targetUrl}`);
     const child = spawnElectron(targetUrl);
 
-    child.on('exit', (code) => {
+    child.on('exit', code => {
       log(`Electron exited with code ${code ?? 0}`);
     });
   } catch (err) {
     console.error('[electron-dev] Failed to start Electron:', err.message);
     console.error(
-      '[electron-dev] Ensure "expo start --web" is running. Set EXPO_WEB_URL or EXPO_WEB_PORT to force a specific dev URL if needed.',
+      '[electron-dev] Ensure "expo start --web" is running. Set EXPO_WEB_URL or EXPO_WEB_PORT to force a specific dev URL if needed.'
     );
     process.exit(1);
   }

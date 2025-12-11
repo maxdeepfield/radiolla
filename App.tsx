@@ -1,6 +1,11 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { StatusBar } from 'expo-status-bar';
-import { useFonts, RobotoCondensed_400Regular, RobotoCondensed_500Medium, RobotoCondensed_700Bold } from '@expo-google-fonts/roboto-condensed';
+import {
+  useFonts,
+  RobotoCondensed_400Regular,
+  RobotoCondensed_500Medium,
+  RobotoCondensed_700Bold,
+} from '@expo-google-fonts/roboto-condensed';
 import {
   FlatList,
   KeyboardAvoidingView,
@@ -20,23 +25,45 @@ import {
 
 // Safe area insets for edge-to-edge mode
 const INSETS = {
-  top: Platform.OS === 'android' ? (RNStatusBar.currentHeight || 24) : 0,
+  top: Platform.OS === 'android' ? RNStatusBar.currentHeight || 24 : 0,
   bottom: Platform.OS === 'android' ? 24 : 0, // Android gesture nav bar height
 };
-import { Audio, InterruptionModeAndroid, InterruptionModeIOS } from 'expo-av';
-import * as Notifications from 'expo-notifications';
+import {
+  getAudioService,
+  initializeAudioMode,
+  AudioService,
+} from './services/audioService';
+import {
+  initializeNotifications,
+  showPlaybackNotification,
+  hidePlaybackNotification,
+} from './services/notificationService';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import appConfig from './app.json';
 import * as DocumentPicker from 'expo-document-picker';
-import * as FileSystem from 'expo-file-system';
+import * as FileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
 import { parsePlaylist, generateM3U, generatePLS } from './utils/playlist';
 
 // Add this import for Electron IPC handling
-let ipcRenderer: any = null;
+interface ElectronIPCRenderer {
+  send?: (channel: string, ...args: unknown[]) => void;
+  on?: (channel: string, listener: (...args: unknown[]) => void) => void;
+  removeListener?: (
+    channel: string,
+    listener: (...args: unknown[]) => void
+  ) => void;
+  invoke?: (channel: string, ...args: unknown[]) => Promise<unknown>;
+}
+
+interface ElectronWindow extends Window {
+  ipcRenderer?: ElectronIPCRenderer;
+}
+
+let ipcRenderer: ElectronIPCRenderer | null = null;
 if (Platform.OS === 'web') {
   // In Electron environment, ipcRenderer is exposed globally
-  ipcRenderer = (window as any).ipcRenderer || null;
+  ipcRenderer = (window as ElectronWindow).ipcRenderer || null;
 }
 
 export type Station = {
@@ -45,15 +72,13 @@ export type Station = {
   url: string;
 };
 
-const STORAGE_KEY = 'Radiolla:stations';
+type PressableState = {
+  hovered?: boolean;
+  pressed?: boolean;
+  focused?: boolean;
+};
 
-Notifications.setNotificationHandler({
-  handleNotification: async () => ({
-    shouldShowAlert: true,
-    shouldPlaySound: false,
-    shouldSetBadge: false,
-  }),
-});
+const STORAGE_KEY = 'Radiolla:stations';
 
 const defaultStations: Station[] = [];
 
@@ -129,9 +154,6 @@ const APP_VERSION = (appConfig as AppConfig).expo?.version ?? '1.0.0';
 const GITHUB_URL = 'https://github.com/maxdeepfield/Radiolla';
 const AF_URL = 'https://absolutefreakout.com';
 
-const PLAYBACK_CATEGORY_ID = 'playback';
-const STOP_ACTION_ID = 'stop-playback';
-
 export default function App() {
   const [fontsLoaded] = useFonts({
     RobotoCondensed_400Regular,
@@ -144,9 +166,11 @@ export default function App() {
   const [urlInput, setUrlInput] = useState('');
   const [currentStation, setCurrentStation] = useState<Station | null>(null);
   const [lastStation, setLastStation] = useState<Station | null>(null);
-  const [playbackState, setPlaybackState] = useState<'idle' | 'loading' | 'playing'>('idle');
+  const [playbackState, setPlaybackState] = useState<
+    'idle' | 'loading' | 'playing'
+  >('idle');
+  const [nowPlayingTrack, setNowPlayingTrack] = useState<string | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
-  const [notificationsAllowed, setNotificationsAllowed] = useState(false);
   const [showAddModal, setShowAddModal] = useState(false);
   const [themePref, setThemePref] = useState<ThemePref>('auto');
   const [themeMenuOpen, setThemeMenuOpen] = useState(false);
@@ -164,16 +188,23 @@ export default function App() {
   const [showImportModal, setShowImportModal] = useState(false);
   const [importStatus, setImportStatus] = useState<string | null>(null);
 
-  const soundRef = useRef<Audio.Sound | null>(null);
-  const playbackNotificationIdRef = useRef<string | null>(null);
-  const responseListenerRef = useRef<any>(null);
+  const audioServiceRef = useRef<AudioService | null>(null);
   const stopPlaybackRef = useRef<() => Promise<void>>(async () => undefined);
   const primaryControlRef = useRef<() => void>(() => {});
   const trayPlayRef = useRef<() => void>(() => {});
   const trayMuteRef = useRef<() => void>(() => {});
+  const playStationRef = useRef<(station: Station) => void>(() => {});
   const lastVolumeRef = useRef(1);
+  const metadataIntervalRef = useRef<ReturnType<typeof setInterval> | null>(
+    null
+  );
 
-  const resolvedTheme = themePref === 'auto' ? (systemScheme === 'dark' ? 'dark' : 'light') : themePref;
+  const resolvedTheme =
+    themePref === 'auto'
+      ? systemScheme === 'dark'
+        ? 'dark'
+        : 'light'
+      : themePref;
   const palette = palettes[resolvedTheme];
   const styles = useMemo(() => createStyles(palette), [palette]);
   const statusBarStyle = resolvedTheme === 'dark' ? 'light' : 'dark';
@@ -181,18 +212,52 @@ export default function App() {
   useEffect(() => {
     const bootstrap = async () => {
       try {
-        if (typeof Audio?.setAudioModeAsync === 'function') {
-          await Audio.setAudioModeAsync({
-            allowsRecordingIOS: false,
-            staysActiveInBackground: true,
-            playsInSilentModeIOS: true,
-            shouldDuckAndroid: true,
-            playThroughEarpieceAndroid: false,
-            interruptionModeAndroid: InterruptionModeAndroid.DuckOthers,
-            interruptionModeIOS: InterruptionModeIOS.DuckOthers,
+        // Initialize audio service and mode
+        await initializeAudioMode();
+        await initializeNotifications();
+        audioServiceRef.current = getAudioService();
+
+        // Set up TrackPlayer callbacks for notification controls (Android/iOS)
+        if (Platform.OS !== 'web' && audioServiceRef.current?.setCallbacks) {
+          audioServiceRef.current.setCallbacks({
+            onPlay: () => {
+              // Resume playback from notification - for live streams, restart
+              const target = currentStation || lastStation;
+              if (target) {
+                playStationRef.current(target);
+              }
+            },
+            onPause: () => {
+              // Pause from notification - for radio streams, this acts like stop
+              stopPlaybackRef.current();
+            },
+            onStop: () => {
+              // Stop from notification
+              stopPlaybackRef.current();
+            },
+            onNext: () => {
+              // Skip to next station
+              const currentIndex = stations.findIndex(s => s.id === currentStation?.id);
+              if (currentIndex >= 0 && currentIndex < stations.length - 1) {
+                const nextStation = stations[currentIndex + 1];
+                if (nextStation) {
+                  playStationRef.current(nextStation);
+                }
+              }
+            },
+            onPrevious: () => {
+              // Skip to previous station
+              const currentIndex = stations.findIndex(s => s.id === currentStation?.id);
+              if (currentIndex > 0) {
+                const prevStation = stations[currentIndex - 1];
+                if (prevStation) {
+                  playStationRef.current(prevStation);
+                }
+              }
+            },
           });
         }
-        await ensureNotificationPermissions();
+
         await loadStoredStations();
         await loadThemePref();
       } catch (e) {
@@ -203,10 +268,11 @@ export default function App() {
     bootstrap();
 
     // Add IPC listener for Electron tray controls
-    let ipcListener: any = null;
+let ipcListener: ((...args: unknown[]) => void) | null = null;
     try {
       if (ipcRenderer && typeof ipcRenderer.on === 'function') {
-        ipcListener = (_event: any, action: string) => {
+        ipcListener = (...args: unknown[]) => {
+          const action = args[1] as string | undefined;
           switch (action) {
             case 'toggle':
               primaryControlRef.current();
@@ -234,10 +300,14 @@ export default function App() {
       stopPlayback();
       // Clean up IPC listener
       try {
-        if (ipcRenderer && ipcListener && typeof ipcRenderer.removeListener === 'function') {
+        if (
+          ipcRenderer &&
+          ipcListener &&
+          typeof ipcRenderer.removeListener === 'function'
+        ) {
           ipcRenderer.removeListener('playback-control', ipcListener);
         }
-      } catch (e) {
+      } catch (_e) {
         // Ignore cleanup errors
       }
     };
@@ -259,8 +329,13 @@ export default function App() {
   useEffect(() => {
     try {
       const globalErrorUtils = (globalThis as any).ErrorUtils;
-      let previousHandler: ((error: Error, isFatal?: boolean) => void) | null = null;
-      if (globalErrorUtils && typeof globalErrorUtils.getGlobalHandler === 'function' && typeof globalErrorUtils.setGlobalHandler === 'function') {
+      let previousHandler: ((error: Error, isFatal?: boolean) => void) | null =
+        null;
+      if (
+        globalErrorUtils &&
+        typeof globalErrorUtils.getGlobalHandler === 'function' &&
+        typeof globalErrorUtils.setGlobalHandler === 'function'
+      ) {
         previousHandler = globalErrorUtils.getGlobalHandler();
         globalErrorUtils.setGlobalHandler((error: Error, isFatal?: boolean) => {
           setUnexpectedError(error?.message ?? 'Something went wrong.');
@@ -271,7 +346,9 @@ export default function App() {
       }
 
       const handleWindowError = (event: any) => {
-        setUnexpectedError(event?.error?.message ?? event?.message ?? 'Something went wrong.');
+        setUnexpectedError(
+          event?.error?.message ?? event?.message ?? 'Something went wrong.'
+        );
       };
       const handleRejection = (event: any) => {
         const reason = event?.reason?.message ?? String(event?.reason ?? '');
@@ -284,14 +361,18 @@ export default function App() {
 
       return () => {
         try {
-          if (globalErrorUtils && typeof globalErrorUtils.setGlobalHandler === 'function' && previousHandler) {
+          if (
+            globalErrorUtils &&
+            typeof globalErrorUtils.setGlobalHandler === 'function' &&
+            previousHandler
+          ) {
             globalErrorUtils.setGlobalHandler(previousHandler);
           }
           if (typeof window !== 'undefined' && window.removeEventListener) {
             window.removeEventListener('error', handleWindowError);
             window.removeEventListener('unhandledrejection', handleRejection);
           }
-        } catch (e) {
+        } catch (_e) {
           // Ignore cleanup errors
         }
       };
@@ -300,40 +381,46 @@ export default function App() {
     }
   }, []);
 
-  const ensureNotificationPermissions = async () => {
-    try {
-      const existing = await Notifications.getPermissionsAsync();
-      if (existing.status !== 'granted') {
-        const requested = await Notifications.requestPermissionsAsync();
-        setNotificationsAllowed(requested.status === 'granted');
-      } else {
-        setNotificationsAllowed(true);
-      }
-
-      if (Platform.OS === 'android') {
-        await Notifications.setNotificationChannelAsync('playback', {
-          name: 'Playback',
-          importance: Notifications.AndroidImportance.DEFAULT,
-        });
-        if (typeof Notifications.setNotificationCategoryAsync === 'function') {
-          await Notifications.setNotificationCategoryAsync(PLAYBACK_CATEGORY_ID, [
-            {
-              identifier: STOP_ACTION_ID,
-              buttonTitle: 'Stop',
-              options: { isDestructive: true },
-            },
-          ]);
-        }
-      }
-    } catch (e) {
-      // Ignore notification setup errors - app can still function without notifications
-      console.warn('Notification setup failed:', e);
-    }
-  };
-
   useEffect(() => {
     loadStoredStations();
   }, []);
+
+  useEffect(() => {
+    const updateLockScreenMetadata = async () => {
+      const audioService = audioServiceRef.current;
+      if (
+        audioService &&
+        currentStation &&
+        playbackState === 'playing' &&
+        Platform.OS !== 'web'
+      ) {
+        try {
+          // Update TrackPlayer notification metadata
+          if (audioService.updateMetadata) {
+            await audioService.updateMetadata(
+              nowPlayingTrack || currentStation.name,
+              nowPlayingTrack ? currentStation.name : 'Radiolla'
+            );
+          }
+          // Also update legacy lock screen (for expo-audio fallback)
+          await audioService.setActiveForLockScreen(true, {
+            title: nowPlayingTrack || currentStation.name,
+            artist: nowPlayingTrack ? currentStation.name : 'Radiolla',
+          });
+          // Show expo-notifications as backup (TrackPlayer handles its own notification)
+          if (Platform.OS === 'web') {
+            await showPlaybackNotification(currentStation.name, nowPlayingTrack);
+          }
+        } catch (error) {
+          console.error('Failed to update lock screen metadata:', error);
+        }
+      } else if (playbackState !== 'playing') {
+        await hidePlaybackNotification();
+      }
+    };
+
+    updateLockScreenMetadata();
+  }, [nowPlayingTrack, currentStation, playbackState]);
 
   const loadStoredStations = async () => {
     try {
@@ -375,90 +462,28 @@ export default function App() {
     }
   };
 
-  const sendNotification = async (title: string, body?: string) => {
-    if (!notificationsAllowed) return;
-    try {
-      await Notifications.scheduleNotificationAsync({
-        content: { title, body, sound: null },
-        trigger: null,
-      });
-    } catch {
-      // ignore notification failures to avoid blocking playback
-    }
-  };
-
-  const dismissPlaybackNotification = async () => {
-    const id = playbackNotificationIdRef.current;
-    playbackNotificationIdRef.current = null;
-    if (!id) return;
-    try {
-      await Notifications.dismissNotificationAsync(id);
-    } catch {
-      // ignore dismiss errors
-    }
-  };
-
-  const showPlaybackNotification = async (station: Station) => {
-    if (!notificationsAllowed || Platform.OS !== 'android') return;
-    await dismissPlaybackNotification();
-    try {
-      const id = await Notifications.scheduleNotificationAsync({
-        content: {
-          title: 'Now playing',
-          body: station.name,
-          categoryIdentifier: PLAYBACK_CATEGORY_ID,
-          sound: null,
-          sticky: true,
-        },
-        trigger: null,
-      });
-      playbackNotificationIdRef.current = id;
-    } catch {
-      // ignore notification failures to avoid blocking playback
-    }
-  };
-
   const stopPlayback = async () => {
-    const sound = soundRef.current;
-    if (sound) {
-      try {
-        await sound.stopAsync();
-        await sound.unloadAsync();
-      } catch {
-        // ignore
+    stopMetadataPolling();
+    const audioService = audioServiceRef.current;
+
+    try {
+      if (audioService) {
+        await audioService.stop();
+        // Clear lock screen controls on mobile
+        if (Platform.OS !== 'web') {
+          await audioService.setActiveForLockScreen(false);
+        }
       }
+      await hidePlaybackNotification();
+    } catch {
+      // ignore
     }
-    soundRef.current = null;
-    await dismissPlaybackNotification();
+
     setPlaybackState('idle');
     setCurrentStation(null);
-    sendNotification('Playback stopped');
   };
 
   stopPlaybackRef.current = stopPlayback;
-
-  useEffect(() => {
-    let sub: ReturnType<typeof Notifications.addNotificationResponseReceivedListener> | null = null;
-    try {
-      if (typeof Notifications.addNotificationResponseReceivedListener === 'function') {
-        sub = Notifications.addNotificationResponseReceivedListener((response) => {
-          if (response.actionIdentifier === STOP_ACTION_ID) {
-            stopPlaybackRef.current();
-          }
-        });
-        responseListenerRef.current = sub;
-      }
-    } catch (e) {
-      // Ignore notification listener errors in release builds
-      console.warn('Failed to add notification listener:', e);
-    }
-    return () => {
-      if (sub?.remove) {
-        sub.remove();
-      }
-      responseListenerRef.current = null;
-    };
-  }, []);
 
   if (!fontsLoaded) {
     return (
@@ -468,37 +493,142 @@ export default function App() {
     );
   }
 
+  // Fetch ICY metadata from stream
+  const fetchStreamMetadata = async (streamUrl: string) => {
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 5000);
+      const response = await fetch(streamUrl, {
+        method: 'GET',
+        headers: { 'Icy-MetaData': '1' },
+        signal: controller.signal,
+      });
+      clearTimeout(timeoutId);
+
+      const icyMetaInt = response.headers.get('icy-metaint');
+      if (!icyMetaInt) return null;
+
+      const metaInt = parseInt(icyMetaInt, 10);
+      const reader = response.body?.getReader();
+      if (!reader) return null;
+
+      let bytesRead = 0;
+      const chunks: Uint8Array[] = [];
+
+      while (bytesRead < metaInt + 4081) {
+        const { value, done } = await reader.read();
+        if (done || !value) break;
+        chunks.push(value);
+        bytesRead += value.length;
+        if (bytesRead > metaInt) break;
+      }
+      reader.cancel();
+
+      const allBytes = new Uint8Array(bytesRead);
+      let offset = 0;
+      for (const chunk of chunks) {
+        allBytes.set(chunk, offset);
+        offset += chunk.length;
+      }
+
+      if (allBytes.length <= metaInt) return null;
+
+      const metaLength = allBytes[metaInt] * 16;
+      if (metaLength === 0) return null;
+
+      const metaBytes = allBytes.slice(metaInt + 1, metaInt + 1 + metaLength);
+      const metaStr = new TextDecoder('utf-8')
+        .decode(metaBytes)
+        .replace(/\0+$/, '');
+
+      const match = metaStr.match(/StreamTitle='([^']*)'/);
+      return match ? match[1] : null;
+    } catch {
+      return null;
+    }
+  };
+
+  // Fetch metadata - use IPC for Electron, direct fetch for mobile
+  const getStreamMetadata = async (
+    streamUrl: string
+  ): Promise<string | null> => {
+    if (Platform.OS === 'web' && ipcRenderer?.invoke) {
+      // Electron: use main process to bypass CORS
+      try {
+        const metadata = await ipcRenderer.invoke(
+          'fetch-stream-metadata',
+          streamUrl
+        );
+        return typeof metadata === 'string' ? metadata : null;
+      } catch {
+        return null;
+      }
+    }
+    // Mobile: direct fetch
+    return fetchStreamMetadata(streamUrl);
+  };
+
+  const startMetadataPolling = (streamUrl: string) => {
+    if (metadataIntervalRef.current) {
+      clearInterval(metadataIntervalRef.current);
+    }
+
+    // Fetch immediately
+    getStreamMetadata(streamUrl).then(setNowPlayingTrack);
+
+    // Then poll every 15 seconds
+    metadataIntervalRef.current = setInterval(async () => {
+      const track = await getStreamMetadata(streamUrl);
+      setNowPlayingTrack(track);
+    }, 15000);
+  };
+
+  const stopMetadataPolling = () => {
+    if (metadataIntervalRef.current) {
+      clearInterval(metadataIntervalRef.current);
+      metadataIntervalRef.current = null;
+    }
+    setNowPlayingTrack(null);
+  };
+
   const playStation = async (station: Station) => {
     setStreamError(null);
     setPlaybackState('loading');
+    setNowPlayingTrack(null);
     setLastStation(station);
     setCurrentStation(station);
     try {
-      if (soundRef.current) {
-        await soundRef.current.unloadAsync();
+      const audioService = audioServiceRef.current;
+      if (!audioService) {
+        throw new Error('Audio service not initialized');
       }
-      const { sound } = await Audio.Sound.createAsync(
-        { uri: station.url },
-        { shouldPlay: true },
-        (status) => {
-          if (!status.isLoaded) return;
-          if (status.isPlaying) setPlaybackState('playing');
-          if (status.didJustFinish) {
-            setPlaybackState('idle');
-            setCurrentStation(null);
-          }
-        },
-      );
-      soundRef.current = sound;
+
+      // Stop existing playback
+      await audioService.stop();
+
+      // Set up lock screen controls
+      if (Platform.OS !== 'web') {
+        await audioService.setActiveForLockScreen(true, {
+          title: station.name,
+          artist: 'Radiolla',
+        });
+      }
+
+      // Start playback with the appropriate service
+      await audioService.play(station.url, station.name);
+
       setPlaybackState('playing');
-      await showPlaybackNotification(station);
-      await sendNotification('Now playing', station.name);
-    } catch (err) {
+      startMetadataPolling(station.url);
+    } catch (_err) {
       setPlaybackState('idle');
       setCurrentStation(null);
+      stopMetadataPolling();
       setStreamError('Unable to play the stream. Check the URL and try again.');
     }
   };
+
+  // Update ref for notification callbacks
+  playStationRef.current = playStation;
 
   const handleSaveStation = async () => {
     setFormError(null);
@@ -511,8 +641,14 @@ export default function App() {
       return;
     }
     if (editingStation) {
-      const updated: Station = { ...editingStation, name: nameInput.trim(), url: urlInput.trim() };
-      const next = stations.map((station) => (station.id === editingStation.id ? updated : station));
+      const updated: Station = {
+        ...editingStation,
+        name: nameInput.trim(),
+        url: urlInput.trim(),
+      };
+      const next = stations.map(station =>
+        station.id === editingStation.id ? updated : station
+      );
       await persistStations(next);
       if (currentStation?.id === editingStation.id) {
         setCurrentStation(updated);
@@ -521,7 +657,6 @@ export default function App() {
         setLastStation(updated);
       }
       setEditingStation(null);
-      sendNotification('Station updated', updated.name);
     } else {
       const newStation: Station = {
         id: Date.now().toString(),
@@ -530,7 +665,6 @@ export default function App() {
       };
       const next = [...stations, newStation];
       await persistStations(next);
-      sendNotification('Station added', newStation.name);
     }
     setNameInput('');
     setUrlInput('');
@@ -538,7 +672,7 @@ export default function App() {
   };
 
   const handleRemove = async (id: string) => {
-    const next = stations.filter((s) => s.id !== id);
+    const next = stations.filter(s => s.id !== id);
     await persistStations(next);
     if (currentStation?.id === id) {
       await stopPlayback();
@@ -546,18 +680,21 @@ export default function App() {
     if (lastStation?.id === id) {
       setLastStation(null);
     }
-    setContextStationId((current) => (current === id ? null : current));
+    setContextStationId(current => (current === id ? null : current));
   };
 
   const toggleStationMenu = (id: string) => {
-    setContextStationId((current) => (current === id ? null : id));
+    setContextStationId(current => (current === id ? null : id));
   };
 
   const closeStationMenu = () => setContextStationId(null);
 
   const handleStationPress = (station: Station) => {
     closeStationMenu();
-    if (currentStation?.id === station.id && (playbackState === 'playing' || playbackState === 'loading')) {
+    if (
+      currentStation?.id === station.id &&
+      (playbackState === 'playing' || playbackState === 'loading')
+    ) {
       stopPlayback();
     } else {
       playStation(station);
@@ -565,7 +702,7 @@ export default function App() {
   };
 
   const toggleMenu = () =>
-    setMenuOpen((prev) => {
+    setMenuOpen(prev => {
       const next = !prev;
       if (!next) {
         setThemeMenuOpen(false);
@@ -580,13 +717,18 @@ export default function App() {
   const renderStation = ({ item }: { item: Station }) => {
     const isCurrent = currentStation?.id === item.id;
     const playing = isCurrent && playbackState === 'playing';
-    const highlighted = isCurrent && (playbackState === 'playing' || playbackState === 'loading');
+    const highlighted =
+      isCurrent && (playbackState === 'playing' || playbackState === 'loading');
     const showActions = contextStationId === item.id;
     return (
       <TouchableOpacity
         activeOpacity={0.95}
         onPress={() => handleStationPress(item)}
-        style={[styles.card, highlighted && styles.activeCard, playing && styles.playingCard]}
+        style={[
+          styles.card,
+          highlighted && styles.activeCard,
+          playing && styles.playingCard,
+        ]}
       >
         <View style={styles.cardMain}>
           <View style={styles.cardText}>
@@ -600,7 +742,7 @@ export default function App() {
           <Pressable
             onPress={() => toggleStationMenu(item.id)}
             hitSlop={6}
-            style={({ hovered, pressed }) => [
+            style={({ hovered, pressed }: PressableState) => [
               styles.cardMenuButton,
               (hovered || pressed) && styles.cardMenuButtonActive,
               showActions && styles.cardMenuButtonActive,
@@ -612,7 +754,7 @@ export default function App() {
         {showActions ? (
           <View style={styles.cardMenuSheet}>
             <Pressable
-              style={({ hovered, pressed }) => [
+              style={({ hovered, pressed }: PressableState) => [
                 styles.cardMenuItem,
                 (hovered || pressed) && styles.cardMenuItemActive,
               ]}
@@ -622,7 +764,7 @@ export default function App() {
             </Pressable>
             <View style={styles.menuDivider} />
             <Pressable
-              style={({ hovered, pressed }) => [
+              style={({ hovered, pressed }: PressableState) => [
                 styles.cardMenuItem,
                 (hovered || pressed) && styles.cardMenuItemActive,
               ]}
@@ -635,7 +777,7 @@ export default function App() {
             </Pressable>
             <View style={styles.menuDivider} />
             <Pressable
-              style={({ hovered, pressed }) => [
+              style={({ hovered, pressed }: PressableState) => [
                 styles.cardMenuItem,
                 (hovered || pressed) && styles.cardMenuItemActive,
               ]}
@@ -699,7 +841,10 @@ export default function App() {
   const handleImportFile = async () => {
     try {
       const result = await DocumentPicker.getDocumentAsync({
-        type: Platform.OS === 'web' ? '.m3u,.pls' : ['audio/x-mpegurl', 'audio/mpegurl', 'audio/x-scpls', '*/*'],
+        type:
+          Platform.OS === 'web'
+            ? '.m3u,.pls'
+            : ['audio/x-mpegurl', 'audio/mpegurl', 'audio/x-scpls', '*/*'],
         copyToCacheDirectory: true,
         multiple: true,
       });
@@ -732,8 +877,9 @@ export default function App() {
 
       const updated = [...stations, ...allNewStations];
       await persistStations(updated);
-      setImportStatus(`Imported ${allNewStations.length} stations from ${files.length} file${files.length > 1 ? 's' : ''}!`);
-      sendNotification(`Imported ${allNewStations.length} stations`);
+      setImportStatus(
+        `Imported ${allNewStations.length} stations from ${files.length} file${files.length > 1 ? 's' : ''}!`
+      );
       setTimeout(() => setShowImportModal(false), 1500);
     } catch (e: any) {
       setImportStatus(`Error: ${e.message || 'Failed to import file'}`);
@@ -760,7 +906,11 @@ export default function App() {
     }
   };
 
-  const downloadFile = async (content: string, filename: string, mimeType: string) => {
+  const downloadFile = async (
+    content: string,
+    filename: string,
+    mimeType: string
+  ) => {
     if (Platform.OS === 'web') {
       // Web: trigger download
       const blob = new Blob([content], { type: mimeType });
@@ -775,7 +925,9 @@ export default function App() {
     } else {
       // Mobile: save to cache and share
       const fileUri = FileSystem.cacheDirectory + filename;
-      await FileSystem.writeAsStringAsync(fileUri, content, { encoding: FileSystem.EncodingType.UTF8 });
+      await FileSystem.writeAsStringAsync(fileUri, content, {
+        encoding: FileSystem.EncodingType.UTF8,
+      });
       await Sharing.shareAsync(fileUri, {
         mimeType,
         dialogTitle: `Save ${filename}`,
@@ -785,7 +937,7 @@ export default function App() {
 
   const toggleVolumePanel = () => {
     if (activeStation) {
-      setShowVolumePanel((prev) => !prev);
+      setShowVolumePanel(prev => !prev);
     }
   };
 
@@ -795,13 +947,16 @@ export default function App() {
     if (newVolume > 0) {
       lastVolumeRef.current = newVolume;
     }
-    if (soundRef.current) {
+
+    const audioService = audioServiceRef.current;
+    if (audioService) {
       try {
-        await soundRef.current.setVolumeAsync(newVolume);
+        await audioService.setVolume(newVolume);
       } catch {
         // ignore volume change errors
       }
     }
+
   };
 
   const toggleMute = () => {
@@ -841,11 +996,12 @@ export default function App() {
   if (playbackState === 'loading') {
     statusLabel = 'Buffering...';
   } else if (playbackState === 'playing') {
-    statusLabel = 'Streaming';
+    statusLabel = nowPlayingTrack || 'Streaming';
   } else if (activeStation) {
     statusLabel = streamError ? `Stopped · ${streamError}` : 'Stopped';
   }
-  const controlIcon = playbackState === 'playing' || playbackState === 'loading' ? '■' : '▶';
+  const controlIcon =
+    playbackState === 'playing' || playbackState === 'loading' ? '■' : '▶';
 
   return (
     <View style={styles.container}>
@@ -858,7 +1014,11 @@ export default function App() {
               <Text style={styles.heading}>Radiolla</Text>
               <Text style={styles.headingBadge}>Absolute Freakout</Text>
             </View>
-            <TouchableOpacity style={styles.menuButton} onPress={toggleMenu} activeOpacity={0.8}>
+            <TouchableOpacity
+              style={styles.menuButton}
+              onPress={toggleMenu}
+              activeOpacity={0.8}
+            >
               <View style={styles.menuIconLine} />
               <View style={styles.menuIconLine} />
               <View style={styles.menuIconLine} />
@@ -867,13 +1027,21 @@ export default function App() {
 
           {menuOpen && (
             <>
-              <TouchableOpacity style={styles.menuBackdrop} activeOpacity={1} onPress={closeMenu} />
+              <TouchableOpacity
+                style={styles.menuBackdrop}
+                activeOpacity={1}
+                onPress={closeMenu}
+              />
               <View style={styles.menuPanel}>
-                <ScrollView contentContainerStyle={styles.menuContent} showsVerticalScrollIndicator={false} bounces={false}>
+                <ScrollView
+                  contentContainerStyle={styles.menuContent}
+                  showsVerticalScrollIndicator={false}
+                  bounces={false}
+                >
                   {/* Removed User Email Header */}
 
                   <Pressable
-                    style={({ hovered, pressed }) => [
+                    style={({ hovered, pressed }: PressableState) => [
                       styles.menuItem,
                       (hovered || pressed) && styles.menuItemActive,
                     ]}
@@ -883,7 +1051,7 @@ export default function App() {
                   </Pressable>
                   <View style={styles.menuDivider} />
                   <Pressable
-                    style={({ hovered, pressed }) => [
+                    style={({ hovered, pressed }: PressableState) => [
                       styles.menuItem,
                       (hovered || pressed) && styles.menuItemActive,
                     ]}
@@ -893,34 +1061,42 @@ export default function App() {
                   </Pressable>
                   <View style={styles.menuDivider} />
                   <Pressable
-                    style={({ hovered, pressed }) => [
+                    style={({ hovered, pressed }: PressableState) => [
                       styles.menuItem,
                       (hovered || pressed) && styles.menuItemActive,
                     ]}
-                    onPress={() => setThemeMenuOpen((prev) => !prev)}
+                    onPress={() => setThemeMenuOpen(prev => !prev)}
                   >
                     <View style={styles.menuItemRow}>
                       <Text style={styles.menuItemLabel}>Theme</Text>
-                      <Text style={styles.menuItemHint}>{themeMenuOpen ? 'v' : '>'}</Text>
+                      <Text style={styles.menuItemHint}>
+                        {themeMenuOpen ? 'v' : '>'}
+                      </Text>
                     </View>
                   </Pressable>
                   {themeMenuOpen ? (
                     <View style={styles.submenu}>
                       <Text style={styles.menuSectionLabel}>Theme</Text>
                       <View style={styles.menuThemeOptions}>
-                        {THEME_OPTIONS.map((option) => {
+                        {THEME_OPTIONS.map(option => {
                           const active = themePref === option.key;
                           return (
                             <Pressable
                               key={option.key}
                               onPress={() => updateThemePref(option.key)}
-                              style={({ hovered, pressed }) => [
+                              style={({ hovered, pressed }: PressableState) => [
                                 styles.menuThemeButton,
                                 active && styles.menuThemeButtonActive,
-                                (hovered || pressed) && styles.menuThemeButtonHover,
+                                (hovered || pressed) &&
+                                  styles.menuThemeButtonHover,
                               ]}
                             >
-                              <Text style={[styles.menuThemeButtonLabel, active && styles.menuThemeButtonLabelActive]}>
+                              <Text
+                                style={[
+                                  styles.menuThemeButtonLabel,
+                                  active && styles.menuThemeButtonLabelActive,
+                                ]}
+                              >
                                 {option.label}
                               </Text>
                             </Pressable>
@@ -931,7 +1107,7 @@ export default function App() {
                   ) : null}
                   <View style={styles.menuDivider} />
                   <Pressable
-                    style={({ hovered, pressed }) => [
+                    style={({ hovered, pressed }: PressableState) => [
                       styles.menuItem,
                       (hovered || pressed) && styles.menuItemActive,
                     ]}
@@ -939,34 +1115,50 @@ export default function App() {
                   >
                     <Text style={styles.menuItemLabel}>About</Text>
                   </Pressable>
-
                 </ScrollView>
               </View>
             </>
           )}
 
-          <KeyboardAvoidingView style={styles.inner} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+          <KeyboardAvoidingView
+            style={styles.inner}
+            behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          >
             <FlatList
               data={stations}
               renderItem={renderStation}
-              keyExtractor={(item) => item.id}
-              extraData={{ contextStationId, currentId: currentStation?.id, playbackState }}
+              keyExtractor={item => item.id}
+              extraData={{
+                contextStationId,
+                currentId: currentStation?.id,
+                playbackState,
+              }}
               contentContainerStyle={styles.list}
               showsVerticalScrollIndicator={false}
             />
           </KeyboardAvoidingView>
 
-          <View style={[styles.bottomBar, { paddingBottom: INSETS.bottom + 8 }]}>
+          <View
+            style={[styles.bottomBar, { paddingBottom: INSETS.bottom + 8 }]}
+          >
             <TouchableOpacity
               style={styles.nowPlayingInfo}
               onPress={toggleVolumePanel}
               activeOpacity={activeStation ? 0.7 : 1}
               disabled={!activeStation}
             >
-              <Text style={styles.nowPlayingTitle} numberOfLines={1} ellipsizeMode="tail">
+              <Text
+                style={styles.nowPlayingTitle}
+                numberOfLines={1}
+                ellipsizeMode="tail"
+              >
                 {activeStation ? activeStation.name : 'No station selected'}
               </Text>
-              <Text style={styles.nowPlayingSubtitle} numberOfLines={1} ellipsizeMode="tail">
+              <Text
+                style={styles.nowPlayingSubtitle}
+                numberOfLines={1}
+                ellipsizeMode="tail"
+              >
                 {statusLabel}
               </Text>
             </TouchableOpacity>
@@ -975,11 +1167,17 @@ export default function App() {
               disabled={!activeStation}
               style={[
                 styles.button,
-                playbackState === 'playing' || playbackState === 'loading' ? styles.secondaryButton : styles.primaryButton,
+                playbackState === 'playing' || playbackState === 'loading'
+                  ? styles.secondaryButton
+                  : styles.primaryButton,
                 styles.controlButton,
                 !activeStation && styles.disabledButton,
               ]}
-              accessibilityLabel={playbackState === 'playing' || playbackState === 'loading' ? 'Stop' : 'Play'}
+              accessibilityLabel={
+                playbackState === 'playing' || playbackState === 'loading'
+                  ? 'Stop'
+                  : 'Play'
+              }
             >
               <Text style={styles.controlIcon}>{controlIcon}</Text>
             </TouchableOpacity>
@@ -989,40 +1187,62 @@ export default function App() {
             <View style={styles.volumePanel}>
               <View style={styles.volumeHeader}>
                 <Text style={styles.volumeLabel}>Volume</Text>
-                <Text style={styles.volumeValue}>{Math.round(volume * 100)}%</Text>
+                <Text style={styles.volumeValue}>
+                  {Math.round(volume * 100)}%
+                </Text>
               </View>
               <View style={styles.volumeSliderContainer}>
-                <TouchableOpacity onPress={() => handleVolumeChange(0)} style={styles.volumeIcon}>
+                <TouchableOpacity
+                  onPress={() => handleVolumeChange(0)}
+                  style={styles.volumeIcon}
+                >
                   <Text style={styles.volumeIconText}>🔈</Text>
                 </TouchableOpacity>
                 <View style={styles.volumeTrack}>
-                  <View style={[styles.volumeFill, { width: `${volume * 100}%` }]} />
+                  <View
+                    style={[styles.volumeFill, { width: `${volume * 100}%` }]}
+                  />
                   <Pressable
                     style={styles.volumeSliderTouch}
-                    onPress={(e) => {
+                    onPress={e => {
                       const { locationX } = e.nativeEvent;
                       const trackWidth = 200;
-                      const newVolume = Math.max(0, Math.min(1, locationX / trackWidth));
+                      const newVolume = Math.max(
+                        0,
+                        Math.min(1, locationX / trackWidth)
+                      );
                       handleVolumeChange(newVolume);
                     }}
                   />
                 </View>
-                <TouchableOpacity onPress={() => handleVolumeChange(1)} style={styles.volumeIcon}>
+                <TouchableOpacity
+                  onPress={() => handleVolumeChange(1)}
+                  style={styles.volumeIcon}
+                >
                   <Text style={styles.volumeIconText}>🔊</Text>
                 </TouchableOpacity>
               </View>
               <View style={styles.volumePresets}>
-                {[0, 0.25, 0.5, 0.75, 1].map((preset) => (
+                {[0, 0.25, 0.5, 0.75, 1].map(preset => (
                   <TouchableOpacity
                     key={preset}
-                    style={[styles.volumePreset, Math.abs(volume - preset) < 0.05 && styles.volumePresetActive]}
+                    style={[
+                      styles.volumePreset,
+                      Math.abs(volume - preset) < 0.05 &&
+                        styles.volumePresetActive,
+                    ]}
                     onPress={() => handleVolumeChange(preset)}
                   >
-                    <Text style={styles.volumePresetLabel}>{Math.round(preset * 100)}%</Text>
+                    <Text style={styles.volumePresetLabel}>
+                      {Math.round(preset * 100)}%
+                    </Text>
                   </TouchableOpacity>
                 ))}
               </View>
-              <TouchableOpacity style={styles.volumeClose} onPress={() => setShowVolumePanel(false)}>
+              <TouchableOpacity
+                style={styles.volumeClose}
+                onPress={() => setShowVolumePanel(false)}
+              >
                 <Text style={styles.volumeCloseLabel}>Done</Text>
               </TouchableOpacity>
             </View>
@@ -1030,10 +1250,17 @@ export default function App() {
         </View>
       </View>
 
-      <Modal visible={showAddModal} animationType="slide" transparent onRequestClose={closeStationModal}>
+      <Modal
+        visible={showAddModal}
+        animationType="slide"
+        transparent
+        onRequestClose={closeStationModal}
+      >
         <View style={styles.modalBackdrop}>
           <View style={styles.modalCard}>
-            <Text style={styles.modalTitle}>{editingStation ? 'Edit a station' : 'Add a station'}</Text>
+            <Text style={styles.modalTitle}>
+              {editingStation ? 'Edit a station' : 'Add a station'}
+            </Text>
             <TextInput
               placeholder="Station name"
               value={nameInput}
@@ -1051,29 +1278,42 @@ export default function App() {
             />
             {formError ? <Text style={styles.error}>{formError}</Text> : null}
             <View style={styles.modalActions}>
-              <TouchableOpacity style={[styles.button, styles.secondaryButton]} onPress={closeStationModal}>
+              <TouchableOpacity
+                style={[styles.button, styles.secondaryButton]}
+                onPress={closeStationModal}
+              >
                 <Text style={styles.buttonLabel}>Cancel</Text>
               </TouchableOpacity>
-              <TouchableOpacity style={[styles.button, styles.primaryButton]} onPress={handleSaveStation}>
-                <Text style={styles.buttonLabel}>{editingStation ? 'Update' : 'Save'}</Text>
+              <TouchableOpacity
+                style={[styles.button, styles.primaryButton]}
+                onPress={handleSaveStation}
+              >
+                <Text style={styles.buttonLabel}>
+                  {editingStation ? 'Update' : 'Save'}
+                </Text>
               </TouchableOpacity>
             </View>
           </View>
         </View>
       </Modal>
 
-      <Modal visible={aboutVisible} animationType="fade" transparent onRequestClose={closeAbout}>
+      <Modal
+        visible={aboutVisible}
+        animationType="fade"
+        transparent
+        onRequestClose={closeAbout}
+      >
         <View style={styles.modalBackdrop}>
           <View style={styles.infoCard}>
             <Text style={styles.modalTitle}>About Radiolla</Text>
             <Text style={styles.infoBody}>
-              Absolute Freakout keeps your curated streams close at hand with fast theme switching and compact VIP
-              controls.
+              Absolute Freakout keeps your curated streams close at hand with
+              fast theme switching and compact VIP controls.
             </Text>
             <Text style={styles.infoMeta}>Version {APP_VERSION}</Text>
             <View style={styles.linkList}>
               <Pressable
-                style={({ hovered, pressed }) => [
+                style={({ hovered, pressed }: PressableState) => [
                   styles.linkRow,
                   (hovered || pressed) && styles.linkRowActive,
                 ]}
@@ -1083,7 +1323,7 @@ export default function App() {
                 <Text style={styles.linkHint}>{GITHUB_URL}</Text>
               </Pressable>
               <Pressable
-                style={({ hovered, pressed }) => [
+                style={({ hovered, pressed }: PressableState) => [
                   styles.linkRow,
                   (hovered || pressed) && styles.linkRowActive,
                 ]}
@@ -1093,43 +1333,83 @@ export default function App() {
                 <Text style={styles.linkHint}>{AF_URL}</Text>
               </Pressable>
             </View>
-            <TouchableOpacity style={[styles.button, styles.primaryButton]} onPress={closeAbout}>
+            <TouchableOpacity
+              style={[styles.button, styles.primaryButton]}
+              onPress={closeAbout}
+            >
               <Text style={styles.buttonLabel}>Close</Text>
             </TouchableOpacity>
           </View>
         </View>
       </Modal>
 
-      <Modal visible={!!unexpectedError} animationType="fade" transparent onRequestClose={dismissUnexpectedError}>
+      <Modal
+        visible={!!unexpectedError}
+        animationType="fade"
+        transparent
+        onRequestClose={dismissUnexpectedError}
+      >
         <View style={styles.modalBackdrop}>
           <View style={styles.infoCard}>
             <Text style={styles.modalTitle}>Unexpected error</Text>
             <Text style={styles.infoBody}>{unexpectedError}</Text>
-            <TouchableOpacity style={[styles.button, styles.primaryButton]} onPress={dismissUnexpectedError}>
+            <TouchableOpacity
+              style={[styles.button, styles.primaryButton]}
+              onPress={dismissUnexpectedError}
+            >
               <Text style={styles.buttonLabel}>Dismiss</Text>
             </TouchableOpacity>
           </View>
         </View>
-
       </Modal>
 
-      <Modal visible={showImportModal} animationType="slide" transparent onRequestClose={() => setShowImportModal(false)}>
+      <Modal
+        visible={showImportModal}
+        animationType="slide"
+        transparent
+        onRequestClose={() => setShowImportModal(false)}
+      >
         <View style={styles.modalBackdrop}>
           <View style={styles.modalCard}>
             <Text style={styles.modalTitle}>Import / Export</Text>
-            <Text style={styles.cardSubtitle}>Import M3U/PLS files or export your stations.</Text>
+            <Text style={styles.cardSubtitle}>
+              Import M3U/PLS files or export your stations.
+            </Text>
 
-            {importStatus ? <Text style={{ color: '#10b981', marginVertical: 10, textAlign: 'center' }}>{importStatus}</Text> : null}
+            {importStatus ? (
+              <Text
+                style={{
+                  color: '#10b981',
+                  marginVertical: 10,
+                  textAlign: 'center',
+                }}
+              >
+                {importStatus}
+              </Text>
+            ) : null}
 
-            <TouchableOpacity style={[styles.button, styles.primaryButton, { marginBottom: 10 }]} onPress={handleImportFile}>
+            <TouchableOpacity
+              style={[
+                styles.button,
+                styles.primaryButton,
+                { marginBottom: 10 },
+              ]}
+              onPress={handleImportFile}
+            >
               <Text style={styles.buttonLabel}>📂 Import File (M3U/PLS)</Text>
             </TouchableOpacity>
 
             <View style={{ flexDirection: 'row', gap: 10, marginBottom: 10 }}>
-              <TouchableOpacity style={[styles.button, styles.secondaryButton, { flex: 1 }]} onPress={handleExportM3U}>
+              <TouchableOpacity
+                style={[styles.button, styles.secondaryButton, { flex: 1 }]}
+                onPress={handleExportM3U}
+              >
                 <Text style={styles.buttonLabel}>Save M3U</Text>
               </TouchableOpacity>
-              <TouchableOpacity style={[styles.button, styles.secondaryButton, { flex: 1 }]} onPress={handleExportPLS}>
+              <TouchableOpacity
+                style={[styles.button, styles.secondaryButton, { flex: 1 }]}
+                onPress={handleExportPLS}
+              >
                 <Text style={styles.buttonLabel}>Save PLS</Text>
               </TouchableOpacity>
             </View>
@@ -1143,381 +1423,85 @@ export default function App() {
           </View>
         </View>
       </Modal>
-
     </View>
   );
 }
 
 const createStyles = (palette: Palette) =>
   StyleSheet.create({
-    container: {
-      flex: 1,
-      backgroundColor: Platform.OS === 'web' ? '#000' : palette.background, // Darker bg for web outer
-    },
-    webWrapper: {
-      flex: 1,
-      alignItems: 'center',
-      justifyContent: 'center',
-      width: '100%',
-    },
-    appFrame: {
-      flex: 1,
-      width: '100%',
-      maxWidth: 500,
-      backgroundColor: palette.background,
-      overflow: 'hidden',
-    },
-    topBar: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'space-between',
-      paddingHorizontal: 14,
-      paddingTop: 6,
-      paddingBottom: 8,
-      borderBottomWidth: 1,
-      borderBottomColor: palette.border,
-      backgroundColor: palette.surface,
-    },
-    heading: {
-      fontSize: 21,
-      fontWeight: '700',
-      color: palette.textPrimary,
-      fontFamily: fonts.bold,
-    },
-    headingBadge: {
-      fontSize: 10,
-      letterSpacing: 1,
-      textTransform: 'uppercase',
-      color: palette.textSecondary,
-      marginTop: 1,
-      fontFamily: fonts.medium,
-    },
-    menuButton: {
-      width: 38,
-      height: 34,
-      borderRadius: 6,
-      alignItems: 'center',
-      justifyContent: 'center',
-      backgroundColor: palette.surface,
-      borderWidth: 1,
-      borderColor: palette.border,
-      gap: 4,
-      paddingVertical: 6,
-    },
-    menuIconLine: {
-      width: 16,
-      height: 2,
-      borderRadius: 1,
-      backgroundColor: palette.textPrimary,
-    },
-    menuBackdrop: {
-      ...StyleSheet.absoluteFillObject,
-      backgroundColor: palette.overlay,
-      zIndex: 10,
-    },
-    menuPanel: {
-      position: 'absolute',
-      top: 54,
-      right: 14,
-      width: 210,
-      maxHeight: '75%',
-      backgroundColor: palette.surface,
-      borderWidth: 1,
-      borderColor: palette.borderStrong,
-      borderStyle: 'dashed',
-      borderRadius: 10,
-      padding: 12,
-      gap: 12,
-      shadowColor: '#000',
-      shadowOpacity: 0.25,
-      shadowRadius: 8,
-      shadowOffset: { width: 0, height: 4 },
-      elevation: 6,
-      zIndex: 11,
-    },
-    menuContent: {
-      gap: 12,
-      paddingBottom: 4,
-    },
-    menuItem: {
-      paddingVertical: 8,
-      borderRadius: 6,
-      paddingHorizontal: 10,
-    },
-    menuItemActive: {
-      backgroundColor: palette.accentSoft,
-    },
-    menuItemDestructive: {
-      marginTop: 4,
-      backgroundColor: palette.destructiveSoft,
-      borderWidth: 1,
-      borderColor: palette.destructiveStrong,
-      borderStyle: 'dashed',
-    },
-    menuItemDestructiveActive: {
-      backgroundColor: palette.destructiveStrong,
-    },
-    menuItemPrimary: {
-      marginTop: 4,
-      backgroundColor: palette.accentSoft,
-      borderWidth: 1,
-      borderColor: palette.accentStrong,
-      borderStyle: 'dashed',
-    },
-    menuItemPrimaryActive: {
-      backgroundColor: palette.accentStrong,
-    },
-    menuItemLabel: {
-      color: palette.textPrimary,
-      fontFamily: fonts.bold,
-      fontSize: 14,
-    },
-    destructiveLabel: {
-      color: '#b02a3c',
-    },
-    primaryLabel: {
-      color: palette.textPrimary,
-    },
-    menuHeader: {
-      paddingBottom: 4,
-      gap: 2,
-    },
-    menuHeaderLabel: {
-      fontSize: 10,
-      textTransform: 'uppercase',
-      color: palette.textSecondary,
-      fontFamily: fonts.medium,
-      letterSpacing: 0.5,
-    },
-    menuHeaderEmail: {
-      fontSize: 13,
-      color: palette.textPrimary,
-      fontFamily: fonts.bold,
-      marginBottom: 4,
-    },
-    menuSpacer: {
-      flex: 1,
-      minHeight: 10,
-    },
-    menuItemRow: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'space-between',
-      gap: 12,
-    },
-    menuItemHint: {
-      color: palette.textSecondary,
-      fontFamily: fonts.medium,
-      fontSize: 12,
-    },
-    menuSection: {
-      gap: 6,
-    },
-    menuSectionLabel: {
-      fontSize: 11,
-      letterSpacing: 1,
-      textTransform: 'uppercase',
-      color: palette.textSecondary,
-      fontFamily: fonts.medium,
-    },
-    submenu: {
-      padding: 10,
-      borderRadius: 8,
-      borderWidth: 1,
-      borderColor: palette.border,
-      backgroundColor: palette.background,
-      gap: 8,
-    },
-    menuThemeOptions: {
-      flexDirection: 'row',
-      gap: 6,
-      flexWrap: 'wrap',
-    },
-    menuThemeButton: {
-      paddingVertical: 6,
-      paddingHorizontal: 10,
-      borderRadius: 4,
-      borderWidth: 1,
-      borderColor: palette.border,
-      backgroundColor: palette.surface,
-    },
-    menuThemeButtonHover: {
-      backgroundColor: palette.accentSoft,
-      borderColor: palette.accentStrong,
-    },
-    menuThemeButtonActive: {
-      borderColor: palette.accentStrong,
-      backgroundColor: palette.accentSoft,
-    },
-    menuThemeButtonLabel: {
-      fontSize: 12,
-      color: palette.textSecondary,
-      fontFamily: fonts.medium,
-    },
-    menuThemeButtonLabelActive: {
-      color: palette.textPrimary,
-    },
-    menuDivider: {
-      borderBottomWidth: 1,
-      borderColor: palette.border,
-      borderStyle: 'dashed',
-      marginVertical: 4,
-      opacity: 0.7,
-    },
-    inner: {
-      flex: 1,
-      paddingHorizontal: 12,
-      paddingTop: 12,
-    },
-    subhead: {
-      fontSize: 13,
-      color: palette.textSecondary,
-      paddingBottom: 4,
-      fontFamily: fonts.regular,
-    },
-    themeSwitch: {
-      flexDirection: 'row',
-      borderWidth: 1,
-      borderColor: palette.border,
-      borderRadius: 6,
-      overflow: 'hidden',
-      alignSelf: 'flex-start',
-      marginBottom: 8,
-      backgroundColor: palette.surface,
-    },
-    themeOption: {
-      paddingHorizontal: 12,
-      paddingVertical: 6,
-      borderRightWidth: 1,
-      borderColor: palette.border,
-    },
-    themeOptionLast: {
-      borderRightWidth: 0,
-    },
-    themeOptionActive: {
-      backgroundColor: palette.accentSoft,
-    },
-    themeOptionLabel: {
-      fontSize: 11,
-      letterSpacing: 1,
-      textTransform: 'uppercase',
-      color: palette.textSecondary,
-      fontFamily: fonts.medium,
-    },
-    themeOptionLabelActive: {
-      color: palette.textPrimary,
-    },
-    list: {
-      paddingTop: 2,
-      paddingBottom: 92,
-    },
-    card: {
-      backgroundColor: palette.surface,
-      borderRadius: 4,
-      paddingTop: 10,
-      paddingHorizontal: 8,
-      paddingBottom: 8,
-      borderWidth: 1,
-      borderColor: palette.border,
-      borderStyle: 'dashed',
-      marginBottom: 12,
-    },
     activeCard: {
       borderColor: palette.accentStrong,
     },
-    playingCard: {
-      backgroundColor: palette.accentSoft,
-    },
-    cardMain: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'space-between',
-      gap: 8,
-    },
-    cardText: {
+    appFrame: {
+      backgroundColor: palette.background,
       flex: 1,
-      gap: 2,
+      maxWidth: 500,
+      overflow: 'hidden',
+      width: '100%',
     },
-    cardTitle: {
-      color: palette.textPrimary,
-      fontSize: 14,
-      fontWeight: '700',
-      fontFamily: fonts.bold,
-    },
-    cardSubtitle: {
-      color: palette.textSecondary,
-      fontSize: 10,
-      fontFamily: fonts.regular,
-    },
-    cardMenuButton: {
-      width: 32,
-      height: 32,
-      borderRadius: 8,
+    bottomBar: {
       alignItems: 'center',
-      justifyContent: 'center',
-      borderWidth: 1,
-      borderColor: palette.border,
       backgroundColor: palette.surface,
-    },
-    cardMenuButtonActive: {
-      borderColor: palette.accentStrong,
-      backgroundColor: palette.accentSoft,
-    },
-    cardMenuIcon: {
-      color: palette.textPrimary,
-      fontSize: 16,
-      fontFamily: fonts.bold,
+      borderTopColor: palette.border,
+      borderTopWidth: 1,
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      paddingHorizontal: 14,
+      paddingVertical: 8,
     },
     button: {
-      paddingVertical: 7,
-      paddingHorizontal: 10,
-      borderRadius: 4,
       alignItems: 'center',
-      justifyContent: 'center',
+      borderRadius: 4,
       flexGrow: 1,
+      justifyContent: 'center',
       minWidth: 0,
-    },
-    primaryButton: {
-      backgroundColor: palette.accentSoft,
-      borderWidth: 1,
-      borderColor: palette.accentStrong,
-      borderStyle: 'dashed',
-    },
-    secondaryButton: {
-      backgroundColor: palette.neutral,
-      borderWidth: 1,
-      borderColor: palette.border,
-      borderStyle: 'dashed',
-    },
-    destructiveButton: {
-      backgroundColor: palette.destructiveSoft,
-      borderWidth: 1,
-      borderColor: palette.destructiveStrong,
-      borderStyle: 'dashed',
+      paddingHorizontal: 10,
+      paddingVertical: 7,
     },
     buttonLabel: {
       color: palette.textPrimary,
-      fontWeight: '700',
       fontFamily: fonts.bold,
+      fontWeight: '700',
     },
-    error: {
-      color: '#b02a3c',
-      fontSize: 14,
-      paddingTop: 2,
-      marginBottom: 4,
-      fontFamily: fonts.medium,
-    },
-    cardMenuSheet: {
-      marginTop: 8,
-      borderRadius: 10,
-      borderWidth: 1,
-      borderColor: palette.borderStrong,
+    card: {
       backgroundColor: palette.surface,
-      overflow: 'hidden',
+      borderColor: palette.border,
+      borderRadius: 4,
+      borderStyle: 'dashed',
+      borderWidth: 1,
+      marginBottom: 12,
+      paddingBottom: 8,
+      paddingHorizontal: 8,
+      paddingTop: 10,
+    },
+    cardMain: {
+      alignItems: 'center',
+      flexDirection: 'row',
+      gap: 8,
+      justifyContent: 'space-between',
+    },
+    cardMenuButton: {
+      alignItems: 'center',
+      backgroundColor: palette.surface,
+      borderColor: palette.border,
+      borderRadius: 8,
+      borderWidth: 1,
+      height: 32,
+      justifyContent: 'center',
+      width: 32,
+    },
+    cardMenuButtonActive: {
+      backgroundColor: palette.accentSoft,
+      borderColor: palette.accentStrong,
+    },
+    cardMenuIcon: {
+      color: palette.textPrimary,
+      fontFamily: fonts.bold,
+      fontSize: 16,
     },
     cardMenuItem: {
-      paddingVertical: 10,
       paddingHorizontal: 12,
+      paddingVertical: 10,
     },
     cardMenuItemActive: {
       backgroundColor: palette.accentSoft,
@@ -1527,174 +1511,452 @@ const createStyles = (palette: Palette) =>
       fontFamily: fonts.bold,
       fontSize: 13,
     },
-    bottomBar: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'space-between',
-      paddingHorizontal: 14,
-      paddingVertical: 8,
-      borderTopWidth: 1,
-      borderTopColor: palette.border,
+    cardMenuSheet: {
       backgroundColor: palette.surface,
+      borderColor: palette.borderStrong,
+      borderRadius: 10,
+      borderWidth: 1,
+      marginTop: 8,
+      overflow: 'hidden',
     },
-    nowPlayingInfo: {
+    cardSubtitle: {
+      color: palette.textSecondary,
+      fontFamily: fonts.regular,
+      fontSize: 10,
+    },
+    cardText: {
       flex: 1,
-      paddingRight: 12,
+      gap: 2,
     },
-    nowPlayingTitle: {
+    cardTitle: {
       color: palette.textPrimary,
+      fontFamily: fonts.bold,
       fontSize: 14,
       fontWeight: '700',
-      fontFamily: fonts.bold,
     },
-    nowPlayingSubtitle: {
-      color: palette.textSecondary,
-      fontSize: 12,
-      fontFamily: fonts.regular,
+    container: {
+      backgroundColor: Platform.OS === 'web' ? '#000' : palette.background,
+      flex: 1, // Darker bg for web outer
     },
     controlButton: {
-      width: 46,
-      height: 46,
-      paddingHorizontal: 0,
-      paddingVertical: 0,
+      alignSelf: 'flex-end',
       borderRadius: 10,
       flexGrow: 0,
-      alignSelf: 'flex-end',
+      height: 46,
       marginLeft: 12,
+      paddingHorizontal: 0,
+      paddingVertical: 0,
+      width: 46,
     },
     controlIcon: {
       color: palette.textPrimary,
-      fontSize: 18,
       fontFamily: fonts.bold,
+      fontSize: 18,
+    },
+    destructiveButton: {
+      backgroundColor: palette.destructiveSoft,
+      borderColor: palette.destructiveStrong,
+      borderStyle: 'dashed',
+      borderWidth: 1,
+    },
+    destructiveLabel: {
+      color: '#b02a3c',
     },
     disabledButton: {
       opacity: 0.5,
     },
-    input: {
-      backgroundColor: palette.background,
-      borderColor: palette.border,
-      borderWidth: 1,
-      borderRadius: 4,
-      paddingHorizontal: 9,
-      paddingVertical: 7,
+    error: {
+      color: '#b02a3c',
+      fontFamily: fonts.medium,
+      fontSize: 14,
+      marginBottom: 4,
+      paddingTop: 2,
+    },
+    heading: {
       color: palette.textPrimary,
-      fontFamily: fonts.regular,
+      fontFamily: fonts.bold,
+      fontSize: 21,
+      fontWeight: '700',
     },
-    modalBackdrop: {
-      flex: 1,
-      backgroundColor: palette.overlay,
-      justifyContent: 'center',
-      alignItems: 'center',
-      padding: 16,
-    },
-    modalCard: {
-      backgroundColor: palette.surface,
-      borderRadius: 6,
-      padding: 12,
-      gap: 6,
-      borderWidth: 1,
-      borderColor: palette.borderStrong,
-      width: '90%',
-      maxWidth: 420,
-      minWidth: 300,
-      borderStyle: 'dashed',
-    },
-    infoCard: {
-      backgroundColor: palette.surface,
-      borderRadius: 10,
-      padding: 16,
-      gap: 10,
-      borderWidth: 1,
-      borderColor: palette.borderStrong,
-      maxWidth: 320,
-      alignSelf: 'center',
-      borderStyle: 'dashed',
+    headingBadge: {
+      color: palette.textSecondary,
+      fontFamily: fonts.medium,
+      fontSize: 10,
+      letterSpacing: 1,
+      marginTop: 1,
+      textTransform: 'uppercase',
     },
     infoBody: {
       color: palette.textSecondary,
       fontFamily: fonts.regular,
       fontSize: 13,
     },
+    infoCard: {
+      alignSelf: 'center',
+      backgroundColor: palette.surface,
+      borderColor: palette.borderStrong,
+      borderRadius: 10,
+      borderStyle: 'dashed',
+      borderWidth: 1,
+      gap: 10,
+      maxWidth: 320,
+      padding: 16,
+    },
     infoMeta: {
       color: palette.textSecondary,
       fontFamily: fonts.medium,
       fontSize: 12,
     },
-    linkList: {
-      gap: 8,
+    inner: {
+      flex: 1,
+      paddingHorizontal: 12,
+      paddingTop: 12,
     },
-    linkRow: {
-      borderWidth: 1,
+    input: {
+      backgroundColor: palette.background,
       borderColor: palette.border,
-      borderRadius: 8,
-      paddingVertical: 8,
-      paddingHorizontal: 10,
-      backgroundColor: palette.surface,
-      gap: 2,
-    },
-    linkRowActive: {
-      borderColor: palette.accentStrong,
-      backgroundColor: palette.accentSoft,
-    },
-    linkLabel: {
+      borderRadius: 4,
+      borderWidth: 1,
       color: palette.textPrimary,
-      fontFamily: fonts.bold,
-      fontSize: 13,
+      fontFamily: fonts.regular,
+      paddingHorizontal: 9,
+      paddingVertical: 7,
     },
     linkHint: {
       color: palette.textSecondary,
       fontFamily: fonts.regular,
       fontSize: 12,
     },
-    modalTitle: {
+    linkLabel: {
       color: palette.textPrimary,
-      fontSize: 17,
-      fontWeight: '700',
       fontFamily: fonts.bold,
+      fontSize: 13,
+    },
+    linkList: {
+      gap: 8,
+    },
+    linkRow: {
+      backgroundColor: palette.surface,
+      borderColor: palette.border,
+      borderRadius: 8,
+      borderWidth: 1,
+      gap: 2,
+      paddingHorizontal: 10,
+      paddingVertical: 8,
+    },
+    linkRowActive: {
+      backgroundColor: palette.accentSoft,
+      borderColor: palette.accentStrong,
+    },
+    list: {
+      paddingBottom: 92,
+      paddingTop: 2,
+    },
+    menuBackdrop: {
+      ...StyleSheet.absoluteFillObject,
+      backgroundColor: palette.overlay,
+      zIndex: 10,
+    },
+    menuButton: {
+      alignItems: 'center',
+      backgroundColor: palette.surface,
+      borderColor: palette.border,
+      borderRadius: 6,
+      borderWidth: 1,
+      gap: 4,
+      height: 34,
+      justifyContent: 'center',
+      paddingVertical: 6,
+      width: 38,
+    },
+    menuContent: {
+      gap: 12,
+      paddingBottom: 4,
+    },
+    menuDivider: {
+      borderBottomWidth: 1,
+      borderColor: palette.border,
+      borderStyle: 'dashed',
+      marginVertical: 4,
+      opacity: 0.7,
+    },
+    menuHeader: {
+      gap: 2,
+      paddingBottom: 4,
+    },
+    menuHeaderEmail: {
+      color: palette.textPrimary,
+      fontFamily: fonts.bold,
+      fontSize: 13,
+      marginBottom: 4,
+    },
+    menuHeaderLabel: {
+      color: palette.textSecondary,
+      fontFamily: fonts.medium,
+      fontSize: 10,
+      letterSpacing: 0.5,
+      textTransform: 'uppercase',
+    },
+    menuIconLine: {
+      backgroundColor: palette.textPrimary,
+      borderRadius: 1,
+      height: 2,
+      width: 16,
+    },
+    menuItem: {
+      borderRadius: 6,
+      paddingHorizontal: 10,
+      paddingVertical: 8,
+    },
+    menuItemActive: {
+      backgroundColor: palette.accentSoft,
+    },
+    menuItemDestructive: {
+      backgroundColor: palette.destructiveSoft,
+      borderColor: palette.destructiveStrong,
+      borderStyle: 'dashed',
+      borderWidth: 1,
+      marginTop: 4,
+    },
+    menuItemDestructiveActive: {
+      backgroundColor: palette.destructiveStrong,
+    },
+    menuItemHint: {
+      color: palette.textSecondary,
+      fontFamily: fonts.medium,
+      fontSize: 12,
+    },
+    menuItemLabel: {
+      color: palette.textPrimary,
+      fontFamily: fonts.bold,
+      fontSize: 14,
+    },
+    menuItemPrimary: {
+      backgroundColor: palette.accentSoft,
+      borderColor: palette.accentStrong,
+      borderStyle: 'dashed',
+      borderWidth: 1,
+      marginTop: 4,
+    },
+    menuItemPrimaryActive: {
+      backgroundColor: palette.accentStrong,
+    },
+    menuItemRow: {
+      alignItems: 'center',
+      flexDirection: 'row',
+      gap: 12,
+      justifyContent: 'space-between',
+    },
+    menuPanel: {
+      backgroundColor: palette.surface,
+      borderColor: palette.borderStrong,
+      borderRadius: 10,
+      borderStyle: 'dashed',
+      borderWidth: 1,
+      elevation: 6,
+      gap: 12,
+      maxHeight: '75%',
+      padding: 12,
+      position: 'absolute',
+      right: 14,
+      shadowColor: '#000',
+      shadowOffset: { width: 0, height: 4 },
+      shadowOpacity: 0.25,
+      shadowRadius: 8,
+      top: 54,
+      width: 210,
+      zIndex: 11,
+    },
+    menuSection: {
+      gap: 6,
+    },
+    menuSectionLabel: {
+      color: palette.textSecondary,
+      fontFamily: fonts.medium,
+      fontSize: 11,
+      letterSpacing: 1,
+      textTransform: 'uppercase',
+    },
+    menuSpacer: {
+      flex: 1,
+      minHeight: 10,
+    },
+    menuThemeButton: {
+      backgroundColor: palette.surface,
+      borderColor: palette.border,
+      borderRadius: 4,
+      borderWidth: 1,
+      paddingHorizontal: 10,
+      paddingVertical: 6,
+    },
+    menuThemeButtonActive: {
+      backgroundColor: palette.accentSoft,
+      borderColor: palette.accentStrong,
+    },
+    menuThemeButtonHover: {
+      backgroundColor: palette.accentSoft,
+      borderColor: palette.accentStrong,
+    },
+    menuThemeButtonLabel: {
+      color: palette.textSecondary,
+      fontFamily: fonts.medium,
+      fontSize: 12,
+    },
+    menuThemeButtonLabelActive: {
+      color: palette.textPrimary,
+    },
+    menuThemeOptions: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: 6,
     },
     modalActions: {
       flexDirection: 'row',
-      justifyContent: 'flex-end',
       gap: 8,
+      justifyContent: 'flex-end',
     },
-    volumePanel: {
-      position: 'absolute',
-      bottom: 70,
-      left: 14,
-      right: 14,
-      backgroundColor: palette.surface,
-      borderRadius: 10,
-      borderWidth: 1,
-      borderColor: palette.borderStrong,
-      borderStyle: 'dashed',
-      padding: 14,
-      gap: 12,
-      shadowColor: '#000',
-      shadowOpacity: 0.2,
-      shadowRadius: 8,
-      shadowOffset: { width: 0, height: -2 },
-      elevation: 8,
-    },
-    volumeHeader: {
-      flexDirection: 'row',
-      justifyContent: 'space-between',
+    modalBackdrop: {
       alignItems: 'center',
+      backgroundColor: palette.overlay,
+      flex: 1,
+      justifyContent: 'center',
+      padding: 16,
     },
-    volumeLabel: {
+    modalCard: {
+      backgroundColor: palette.surface,
+      borderColor: palette.borderStrong,
+      borderRadius: 6,
+      borderStyle: 'dashed',
+      borderWidth: 1,
+      gap: 6,
+      maxWidth: 420,
+      minWidth: 300,
+      padding: 12,
+      width: '90%',
+    },
+    modalTitle: {
       color: palette.textPrimary,
+      fontFamily: fonts.bold,
+      fontSize: 17,
+      fontWeight: '700',
+    },
+    nowPlayingInfo: {
+      flex: 1,
+      paddingRight: 12,
+    },
+    nowPlayingSubtitle: {
+      color: palette.textSecondary,
+      fontFamily: fonts.regular,
+      fontSize: 12,
+    },
+    nowPlayingTitle: {
+      color: palette.textPrimary,
+      fontFamily: fonts.bold,
       fontSize: 14,
       fontWeight: '700',
-      fontFamily: fonts.bold,
     },
-    volumeValue: {
+    playingCard: {
+      backgroundColor: palette.accentSoft,
+    },
+    primaryButton: {
+      backgroundColor: palette.accentSoft,
+      borderColor: palette.accentStrong,
+      borderStyle: 'dashed',
+      borderWidth: 1,
+    },
+    primaryLabel: {
+      color: palette.textPrimary,
+    },
+    secondaryButton: {
+      backgroundColor: palette.neutral,
+      borderColor: palette.border,
+      borderStyle: 'dashed',
+      borderWidth: 1,
+    },
+    subhead: {
       color: palette.textSecondary,
+      fontFamily: fonts.regular,
       fontSize: 13,
-      fontFamily: fonts.medium,
+      paddingBottom: 4,
     },
-    volumeSliderContainer: {
+    submenu: {
+      backgroundColor: palette.background,
+      borderColor: palette.border,
+      borderRadius: 8,
+      borderWidth: 1,
+      gap: 8,
+      padding: 10,
+    },
+    themeOption: {
+      borderColor: palette.border,
+      borderRightWidth: 1,
+      paddingHorizontal: 12,
+      paddingVertical: 6,
+    },
+    themeOptionActive: {
+      backgroundColor: palette.accentSoft,
+    },
+    themeOptionLabel: {
+      color: palette.textSecondary,
+      fontFamily: fonts.medium,
+      fontSize: 11,
+      letterSpacing: 1,
+      textTransform: 'uppercase',
+    },
+    themeOptionLabelActive: {
+      color: palette.textPrimary,
+    },
+    themeOptionLast: {
+      borderRightWidth: 0,
+    },
+    themeSwitch: {
+      alignSelf: 'flex-start',
+      backgroundColor: palette.surface,
+      borderColor: palette.border,
+      borderRadius: 6,
+      borderWidth: 1,
       flexDirection: 'row',
+      marginBottom: 8,
+      overflow: 'hidden',
+    },
+    topBar: {
       alignItems: 'center',
-      gap: 10,
+      backgroundColor: palette.surface,
+      borderBottomColor: palette.border,
+      borderBottomWidth: 1,
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      paddingBottom: 8,
+      paddingHorizontal: 14,
+      paddingTop: 6,
+    },
+    volumeClose: {
+      alignItems: 'center',
+      backgroundColor: palette.accentSoft,
+      borderColor: palette.accentStrong,
+      borderRadius: 6,
+      borderStyle: 'dashed',
+      borderWidth: 1,
+      paddingVertical: 10,
+    },
+    volumeCloseLabel: {
+      color: palette.textPrimary,
+      fontFamily: fonts.bold,
+      fontSize: 13,
+      fontWeight: '700',
+    },
+    volumeFill: {
+      backgroundColor: palette.accentStrong,
+      borderRadius: 4,
+      bottom: 0,
+      left: 0,
+      position: 'absolute',
+      top: 0,
+    },
+    volumeHeader: {
+      alignItems: 'center',
+      flexDirection: 'row',
+      justifyContent: 'space-between',
     },
     volumeIcon: {
       padding: 4,
@@ -1702,61 +1964,78 @@ const createStyles = (palette: Palette) =>
     volumeIconText: {
       fontSize: 18,
     },
-    volumeTrack: {
-      flex: 1,
-      height: 8,
-      backgroundColor: palette.neutral,
-      borderRadius: 4,
-      overflow: 'hidden',
-      position: 'relative',
+    volumeLabel: {
+      color: palette.textPrimary,
+      fontFamily: fonts.bold,
+      fontSize: 14,
+      fontWeight: '700',
     },
-    volumeFill: {
+    volumePanel: {
+      backgroundColor: palette.surface,
+      borderColor: palette.borderStrong,
+      borderRadius: 10,
+      borderStyle: 'dashed',
+      borderWidth: 1,
+      bottom: 70,
+      elevation: 8,
+      gap: 12,
+      left: 14,
+      padding: 14,
       position: 'absolute',
-      left: 0,
-      top: 0,
-      bottom: 0,
-      backgroundColor: palette.accentStrong,
-      borderRadius: 4,
+      right: 14,
+      shadowColor: '#000',
+      shadowOffset: { width: 0, height: -2 },
+      shadowOpacity: 0.2,
+      shadowRadius: 8,
+    },
+    volumePreset: {
+      alignItems: 'center',
+      backgroundColor: palette.background,
+      borderColor: palette.border,
+      borderRadius: 6,
+      borderWidth: 1,
+      flex: 1,
+      paddingVertical: 8,
+    },
+    volumePresetActive: {
+      backgroundColor: palette.accentSoft,
+      borderColor: palette.accentStrong,
+    },
+    volumePresetLabel: {
+      color: palette.textSecondary,
+      fontFamily: fonts.medium,
+      fontSize: 11,
+    },
+    volumePresets: {
+      flexDirection: 'row',
+      gap: 6,
+      justifyContent: 'space-between',
+    },
+    volumeSliderContainer: {
+      alignItems: 'center',
+      flexDirection: 'row',
+      gap: 10,
     },
     volumeSliderTouch: {
       ...StyleSheet.absoluteFillObject,
     },
-    volumePresets: {
-      flexDirection: 'row',
-      justifyContent: 'space-between',
-      gap: 6,
-    },
-    volumePreset: {
+    volumeTrack: {
+      backgroundColor: palette.neutral,
+      borderRadius: 4,
       flex: 1,
-      paddingVertical: 8,
-      borderRadius: 6,
-      borderWidth: 1,
-      borderColor: palette.border,
-      backgroundColor: palette.background,
-      alignItems: 'center',
+      height: 8,
+      overflow: 'hidden',
+      position: 'relative',
     },
-    volumePresetActive: {
-      borderColor: palette.accentStrong,
-      backgroundColor: palette.accentSoft,
-    },
-    volumePresetLabel: {
+    volumeValue: {
       color: palette.textSecondary,
-      fontSize: 11,
       fontFamily: fonts.medium,
-    },
-    volumeClose: {
-      paddingVertical: 10,
-      borderRadius: 6,
-      backgroundColor: palette.accentSoft,
-      borderWidth: 1,
-      borderColor: palette.accentStrong,
-      borderStyle: 'dashed',
-      alignItems: 'center',
-    },
-    volumeCloseLabel: {
-      color: palette.textPrimary,
       fontSize: 13,
-      fontWeight: '700',
-      fontFamily: fonts.bold,
+    },
+    webWrapper: {
+      alignItems: 'center',
+      flex: 1,
+      justifyContent: 'center',
+      width: '100%',
     },
   });

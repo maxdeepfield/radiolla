@@ -27,12 +27,14 @@ let mainWindow;
 let muteMenuItem = null;
 let pendingMuteState = null;
 let isPlaying = false;
-const iconFileName = process.platform === 'win32' ? 'radiolla_icon.ico' : 'radiolla_icon.png';
+const iconFileName =
+  process.platform === 'win32' ? 'radiolla_icon.ico' : 'radiolla_icon.png';
 const STATIC_HOST = '127.0.0.1';
 const STATIC_PORT = 19573;
 
 // Window state persistence
-const getWindowStatePath = () => path.join(app.getPath('userData'), 'window-state.json');
+const getWindowStatePath = () =>
+  path.join(app.getPath('userData'), 'window-state.json');
 
 const loadWindowState = () => {
   try {
@@ -43,10 +45,15 @@ const loadWindowState = () => {
   }
 };
 
-const saveWindowState = (win) => {
+const saveWindowState = win => {
   if (!win || win.isDestroyed()) return;
   const bounds = win.getBounds();
-  const state = { x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height };
+  const state = {
+    x: bounds.x,
+    y: bounds.y,
+    width: bounds.width,
+    height: bounds.height,
+  };
   try {
     fs.writeFileSync(getWindowStatePath(), JSON.stringify(state));
   } catch (err) {
@@ -54,12 +61,14 @@ const saveWindowState = (win) => {
   }
 };
 
-const startStaticServer = (rootDir) =>
+const startStaticServer = rootDir =>
   new Promise((resolve, reject) => {
     const server = http.createServer((req, res) => {
       const { pathname = '/' } = url.parse(req.url);
       const cleanedPath = decodeURIComponent(pathname.replace(/^\/+/, ''));
-      const targetPath = path.normalize(path.join(rootDir, cleanedPath || 'index.html'));
+      const targetPath = path.normalize(
+        path.join(rootDir, cleanedPath || 'index.html')
+      );
 
       // Prevent path traversal outside of the web build directory.
       if (!targetPath.startsWith(rootDir)) {
@@ -87,7 +96,10 @@ const startStaticServer = (rootDir) =>
         }
 
         const ext = path.extname(filePath).toLowerCase();
-        res.setHeader('Content-Type', mimeTypes[ext] || 'application/octet-stream');
+        res.setHeader(
+          'Content-Type',
+          mimeTypes[ext] || 'application/octet-stream'
+        );
         res.end(data);
       });
     });
@@ -99,7 +111,7 @@ const startStaticServer = (rootDir) =>
       resolve({ server, url: `http://${STATIC_HOST}:${port}` });
     };
 
-    const handleError = (err) => {
+    const handleError = err => {
       if (err.code === 'EADDRINUSE') {
         // Keep a stable origin for persisted storage; fall back only if the preferred port is busy.
         server.close(() => server.listen(0, STATIC_HOST));
@@ -113,7 +125,7 @@ const startStaticServer = (rootDir) =>
     server.listen(STATIC_PORT, STATIC_HOST);
   });
 
-const ensureStaticServer = async (rootDir) => {
+const ensureStaticServer = async rootDir => {
   if (staticServer) return staticServer;
   staticServer = await startStaticServer(rootDir);
   return staticServer;
@@ -126,7 +138,7 @@ const stopStaticServer = () => {
   }
 };
 
-const buildTrayMenu = (win) => {
+const buildTrayMenu = win => {
   return Menu.buildFromTemplate([
     {
       label: 'Show',
@@ -141,9 +153,12 @@ const buildTrayMenu = (win) => {
       label: isPlaying ? '⏹ Stop' : '▶ Play',
       click: () => {
         if (mainWindow && !mainWindow.isDestroyed()) {
-          mainWindow.webContents.send('playback-control', isPlaying ? 'stop' : 'play');
+          mainWindow.webContents.send(
+            'playback-control',
+            isPlaying ? 'stop' : 'play'
+          );
         }
-      }
+      },
     },
     {
       label: 'Mute',
@@ -154,14 +169,14 @@ const buildTrayMenu = (win) => {
         if (mainWindow && !mainWindow.isDestroyed()) {
           mainWindow.webContents.send('playback-control', 'mute');
         }
-      }
+      },
     },
     { type: 'separator' },
     {
       label: 'Always on top',
       type: 'checkbox',
       checked: win.isAlwaysOnTop(),
-      click: (menuItem) => {
+      click: menuItem => {
         if (win.isDestroyed()) return;
         win.setAlwaysOnTop(menuItem.checked);
       },
@@ -183,7 +198,7 @@ const updateTrayMenu = () => {
   muteMenuItem = menu.getMenuItemById('tray-mute');
 };
 
-const createTray = (win) => {
+const createTray = win => {
   if (tray) return tray;
   const iconPath = path.join(__dirname, '..', 'assets', iconFileName);
   tray = new Tray(iconPath);
@@ -198,12 +213,12 @@ const createTray = (win) => {
   return tray;
 };
 
-const applyMuteStateToMenu = (isMuted) => {
+const applyMuteStateToMenu = isMuted => {
   pendingMuteState = isMuted;
   updateTrayMenu();
 };
 
-const applyPlaybackStateToMenu = (playing) => {
+const applyPlaybackStateToMenu = playing => {
   isPlaying = playing;
   updateTrayMenu();
 };
@@ -238,12 +253,12 @@ const createWindow = async () => {
   win.setMenu(null);
   win.setMenuBarVisibility(false);
 
-  win.on('minimize', (event) => {
+  win.on('minimize', event => {
     event.preventDefault();
     win.hide();
   });
 
-  win.on('close', (event) => {
+  win.on('close', event => {
     // Keep the app running in tray unless quitting explicitly.
     if (!app.isQuiting) {
       event.preventDefault();
@@ -254,17 +269,26 @@ const createWindow = async () => {
   const loadMainContent = async () => {
     try {
       const distPath = path.join(__dirname, '..', 'dist', 'index.html');
-      const fallbackPath = path.join(__dirname, '..', 'web-build', 'index.html');
+      const fallbackPath = path.join(
+        __dirname,
+        '..',
+        'web-build',
+        'index.html'
+      );
       const devUrl = process.env.EXPO_WEB_URL;
 
       let contentUrl;
       if (devUrl) {
         contentUrl = devUrl;
       } else if (fs.existsSync(distPath)) {
-        const { url: staticUrl } = await ensureStaticServer(path.dirname(distPath));
+        const { url: staticUrl } = await ensureStaticServer(
+          path.dirname(distPath)
+        );
         contentUrl = staticUrl;
       } else if (fs.existsSync(fallbackPath)) {
-        const { url: staticUrl } = await ensureStaticServer(path.dirname(fallbackPath));
+        const { url: staticUrl } = await ensureStaticServer(
+          path.dirname(fallbackPath)
+        );
         contentUrl = staticUrl;
       } else {
         contentUrl = 'http://localhost:8082';
@@ -277,29 +301,35 @@ const createWindow = async () => {
     }
   };
 
-  await win
-    .loadFile(path.join(__dirname, 'loading.html'))
-    .catch((err) => {
-      // Navigating away from the loading screen can emit ERR_ABORTED; ignore it.
-      if (err?.code !== 'ERR_ABORTED') {
-        throw err;
-      }
-    });
+  await win.loadFile(path.join(__dirname, 'loading.html')).catch(err => {
+    // Navigating away from the loading screen can emit ERR_ABORTED; ignore it.
+    if (err?.code !== 'ERR_ABORTED') {
+      throw err;
+    }
+  });
   if (!savedState) win.center();
   win.show();
   // Start loading the main app after the spinner has been displayed.
   loadMainContent();
 
   // Surface renderer console logs in the main process to help debugging blank screens.
-  win.webContents.on('console-message', (_event, level, message, line, sourceId) => {
-    const levels = ['log', 'warn', 'error', 'info'];
-    const tag = levels[level] || 'log';
-    console.log(`[renderer:${tag}] ${message} (${sourceId}:${line})`);
-  });
+  win.webContents.on(
+    'console-message',
+    (_event, level, message, line, sourceId) => {
+      const levels = ['log', 'warn', 'error', 'info'];
+      const tag = levels[level] || 'log';
+      console.log(`[renderer:${tag}] ${message} (${sourceId}:${line})`);
+    }
+  );
 
-  win.webContents.on('did-fail-load', (_event, errorCode, errorDescription, validatedURL) => {
-    console.error(`Renderer failed to load ${validatedURL}: ${errorDescription} (${errorCode})`);
-  });
+  win.webContents.on(
+    'did-fail-load',
+    (_event, errorCode, errorDescription, validatedURL) => {
+      console.error(
+        `Renderer failed to load ${validatedURL}: ${errorDescription} (${errorCode})`
+      );
+    }
+  );
 
   win.webContents.on('did-finish-load', () => {
     console.log('Renderer finished loading.');
@@ -317,8 +347,7 @@ const createWindow = async () => {
 };
 
 ipcMain.on('playback-mute-state', (_event, payload) => {
-  const next =
-    typeof payload === 'boolean' ? payload : payload?.isMuted;
+  const next = typeof payload === 'boolean' ? payload : payload?.isMuted;
   if (typeof next === 'boolean') {
     applyMuteStateToMenu(next);
   }
@@ -329,8 +358,75 @@ ipcMain.on('playback-state', (_event, state) => {
   applyPlaybackStateToMenu(state === 'playing' || state === 'loading');
 });
 
+// Fetch ICY metadata from stream (bypasses CORS)
+ipcMain.handle('fetch-stream-metadata', async (_event, streamUrl) => {
+  return new Promise(resolve => {
+    try {
+      const parsedUrl = new URL(streamUrl);
+      const isHttps = parsedUrl.protocol === 'https:';
+      const httpModule = isHttps ? require('https') : require('http');
+
+      const options = {
+        hostname: parsedUrl.hostname,
+        port: parsedUrl.port || (isHttps ? 443 : 80),
+        path: parsedUrl.pathname + parsedUrl.search,
+        method: 'GET',
+        headers: { 'Icy-MetaData': '1' },
+        timeout: 5000,
+      };
+
+      const req = httpModule.request(options, res => {
+        const metaInt = parseInt(res.headers['icy-metaint'], 10);
+        if (!metaInt) {
+          res.destroy();
+          return resolve(null);
+        }
+
+        let bytesRead = 0;
+        const chunks = [];
+
+        res.on('data', chunk => {
+          chunks.push(chunk);
+          bytesRead += chunk.length;
+          if (bytesRead > metaInt + 4096) {
+            res.destroy();
+          }
+        });
+
+        res.on('close', () => {
+          try {
+            const allBytes = Buffer.concat(chunks);
+            if (allBytes.length <= metaInt) return resolve(null);
+
+            const metaLength = allBytes[metaInt] * 16;
+            if (metaLength === 0) return resolve(null);
+
+            const metaStr = allBytes
+              .slice(metaInt + 1, metaInt + 1 + metaLength)
+              .toString('utf8')
+              .replace(/\0+$/, '');
+            const match = metaStr.match(/StreamTitle='([^']*)'/);
+            resolve(match ? match[1] : null);
+          } catch {
+            resolve(null);
+          }
+        });
+      });
+
+      req.on('error', () => resolve(null));
+      req.on('timeout', () => {
+        req.destroy();
+        resolve(null);
+      });
+      req.end();
+    } catch {
+      resolve(null);
+    }
+  });
+});
+
 app.whenReady().then(() => {
-  createWindow().catch((err) => {
+  createWindow().catch(err => {
     // Log startup failures instead of crashing silently.
     console.error('Failed to create window', err);
   });
@@ -345,7 +441,9 @@ app.on('window-all-closed', () => {
 
 app.on('activate', () => {
   if (BrowserWindow.getAllWindows().length === 0) {
-    createWindow().catch((err) => console.error('Failed to recreate window', err));
+    createWindow().catch(err =>
+      console.error('Failed to recreate window', err)
+    );
   }
 });
 

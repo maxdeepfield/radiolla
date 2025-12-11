@@ -34,6 +34,7 @@ Radiolla is a cross-platform radio streaming application designed for managing a
 ## Installation
 
 ### Prerequisites
+
 - Node.js 18+ recommended.
 - Expo CLI (installed via `npm install`).
 - For Android development: Android Studio or native toolchain.
@@ -41,6 +42,7 @@ Radiolla is a cross-platform radio streaming application designed for managing a
 - For Electron: Windows (for building installer).
 
 ### Install Dependencies
+
 ```bash
 npm install
 ```
@@ -48,15 +50,18 @@ npm install
 ## Usage
 
 ### Running in Expo Go
+
 The app uses Expo-managed modules included in Expo Go (expo-av, expo-notifications, AsyncStorage, status-bar). Audio plays in foreground and can continue in background, subject to OS power policies. Only local notifications are used; remote push is not configured.
 
 ### Development
+
 - **Web**: `npm run web` - Starts Expo web dev server.
 - **Android**: `npm run android` - Runs on Android device/emulator.
 - **iOS**: `npm run ios` - Runs on iOS simulator/device (macOS only).
 - **Electron (Dev)**: `npm run electron` - Starts Expo web in dev mode and launches Electron against it.
 
 ### Adding and Managing Stations
+
 1. Open the app.
 2. Tap "Add Station" to enter a stream URL (must start with http/https).
 3. Validate and save the station.
@@ -64,6 +69,7 @@ The app uses Expo-managed modules included in Expo Go (expo-av, expo-notificatio
 5. Use the theme switcher for light/dark/auto modes.
 
 ### Notifications
+
 - Grant notification permission when prompted.
 - On Android, a sticky "Now Playing" notification appears with a Stop button.
 - Notifications are local and lightweight.
@@ -71,36 +77,45 @@ The app uses Expo-managed modules included in Expo Go (expo-av, expo-notificatio
 ## Building and Deployment
 
 ### Web Bundle Export
+
 Outputs to `dist/` (consumed by Electron):
+
 ```bash
 npm run web:export
 ```
 
 ### Electron Packaging
+
 Bundles the web export and runs Electron in production mode:
+
 ```bash
 npm run electron:pack
 ```
 
 ### Electron Installer (Windows)
+
 Builds the NSIS installer into `release/`:
+
 ```bash
 npm run electron:build
 ```
 
 ### Local Android APK
+
 Build an APK locally (no EAS required):
+
 ```bash
 npm install
 npx expo prebuild --platform android  # Generates android/ (managed -> bare)
 cd android
 ./gradlew assembleRelease  # Windows: .\gradlew assembleRelease
 ```
+
 Find the APK at `android/app/build/outputs/apk/release/app-release.apk`. Install with `adb install -r app-release.apk`. For signed releases, create a keystore and update signing config in `android/app/build.gradle`.
 
 ## Troubleshooting
 
-- **Blank window or ERR_FILE_NOT_FOUND for /_expo/...**: Run `npm run web:export` before packaging to create `dist/`; the Electron static server serves those assets.
+- **Blank window or ERR_FILE_NOT_FOUND for /\_expo/...**: Run `npm run web:export` before packaging to create `dist/`; the Electron static server serves those assets.
 - **No audio**: Verify the stream URL works in a browser and starts with http or https.
 - **Notifications not showing**: Grant notification permission; on Android, ensure the Playback channel exists.
 - **Dev server not ready**: When running `npm run electron`, Expo must finish starting; wait-on times out after 30s if it cannot reach the dev URL.

@@ -5,4 +5,5 @@ contextBridge.exposeInMainWorld('ipcRenderer', {
   on: (...args) => ipcRenderer.on(...args),
   removeListener: (...args) => ipcRenderer.removeListener(...args),
   send: (...args) => ipcRenderer.send(...args),
+  invoke: (...args) => ipcRenderer.invoke(...args),
 });

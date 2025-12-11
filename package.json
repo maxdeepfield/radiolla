@@ -9,17 +9,33 @@
     "ios": "expo run:ios",
     "web": "expo start --web",
     "electron": "concurrently \"cross-env EXPO_NO_WEB_BROWSER=1 expo start --web\" \"node electron/run-electron.js\"",
-    "web:export": "expo export --platform web --output-dir dist",
-    "electron:pack": "npm run web:export && cross-env NODE_ENV=production electron electron/main.js",
     "electron:build": "npm run web:export && electron-builder --win --publish never",
+    "web:export": "expo export --platform web --output-dir dist",
     "typecheck": "tsc --noEmit",
     "lint": "eslint . --ext .ts,.tsx",
-    "lint:fix": "eslint . --ext .ts,.tsx --fix"
+    "lint:fix": "eslint . --ext .ts,.tsx --fix",
+    "format": "prettier --write \"**/*.{ts,tsx,js,jsx,json,md}\"",
+    "format:check": "prettier --check \"**/*.{ts,tsx,js,jsx,json,md}\"",
+    "prepare": "husky",
+    "android:prebuild": "expo prebuild --platform android --clean",
+    "android:build:debug": "cd android && cross-env NODE_ENV=development gradle assembleDebug",
+    "android:build:release": "cd android && .\\gradlew.bat assembleRelease",
+    "android:clean": "cd android && .\\gradlew.bat clean",
+    "android:install:debug": "adb install -r build/outputs/apk/debug/app-debug.apk",
+    "android:install:release": "adb install -r android/app/build/outputs/apk/release/app-release.apk",
+    "android:launch": "adb shell am start -n com.anonymous.radiolla/.MainActivity",
+    "android:uninstall": "adb uninstall com.anonymous.radiolla",
+    "android:logcat": "adb logcat -s ReactNativeJS:V ReactNative:V",
+    "android:dev": "npm run android:prebuild && npm run android:build:debug && npm run android:install:debug && npm run android:launch",
+    "android:release": "npm run android:clean && npm run android:prebuild && npm run android:build:release && npm run android:install:release && npm run android:launch && npm run android:logcat",
+    "check": "npm run typecheck && npm run lint",
+    "clean": "npm run android:clean && rimraf dist build release"
   },
   "dependencies": {
     "@expo-google-fonts/roboto-condensed": "^0.4.2",
     "@react-native-async-storage/async-storage": "2.2.0",
     "expo": "~54.0.25",
+    "expo-audio": "~1.0.15",
     "expo-av": "~16.0.7",
     "expo-clipboard": "~8.0.7",
     "expo-document-picker": "~14.0.7",
@@ -28,17 +44,29 @@
     "expo-notifications": "~0.32.13",
     "expo-sharing": "~14.0.7",
     "expo-status-bar": "~3.0.8",
+    "expo-system-ui": "^6.0.9",
     "react": "19.1.0",
     "react-dom": "19.1.0",
     "react-native": "0.81.5",
+    "react-native-track-player": "^5.0.0-alpha0-nightly-cad7f4b0cdea1ab20fd988debcfdbdced7907a39",
     "react-native-web": "^0.21.0"
   },
   "devDependencies": {
     "@types/react": "~19.1.0",
+    "@typescript-eslint/eslint-plugin": "^8.48.1",
+    "@typescript-eslint/parser": "^8.48.1",
     "concurrently": "^9.2.1",
     "cross-env": "^10.1.0",
     "electron": "^39.2.2",
     "electron-builder": "^26.0.12",
+    "eslint": "^8.57.0",
+    "eslint-config-prettier": "^10.1.8",
+    "eslint-plugin-prettier": "^5.5.4",
+    "eslint-plugin-react": "^7.35.0",
+    "eslint-plugin-react-native": "^4.1.0",
+    "husky": "^9.1.7",
+    "lint-staged": "^16.2.7",
+    "prettier": "^3.7.4",
     "typescript": "~5.9.2",
     "wait-on": "^9.0.3"
   },
@@ -72,6 +100,15 @@
       "uninstallerIcon": "assets/radiolla_icon.ico",
       "installerHeaderIcon": "assets/radiolla_icon.ico"
     }
+  },
+  "lint-staged": {
+    "*.{ts,tsx}": [
+      "eslint --fix",
+      "prettier --write"
+    ],
+    "*.{js,jsx,json,md}": [
+      "prettier --write"
+    ]
   },
   "private": true
 }

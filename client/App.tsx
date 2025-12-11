@@ -1,11 +1,6 @@
 import React from 'react';
-import { App as RootComponent } from './components/App';
-import { ThemeProvider } from './shared/themes';
+import RootApp from '../App';
 
-const App: React.FC = () => (
-  <ThemeProvider>
-    <RootComponent />
-  </ThemeProvider>
-);
+const App: React.FC = () => <RootApp />;
 
 export default App;
