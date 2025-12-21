@@ -44,6 +44,15 @@
         {
           "androidForegroundServiceTypes": ["mediaPlayback"]
         }
+      ],
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "usesCleartextTraffic": true,
+            "networkSecurityConfig": "./network_security_config.xml"
+          }
+        }
       ]
     ]
   }

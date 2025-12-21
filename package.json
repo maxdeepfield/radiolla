@@ -37,6 +37,7 @@
     "expo": "~54.0.25",
     "expo-audio": "~1.0.15",
     "expo-av": "~16.0.7",
+    "expo-build-properties": "^1.0.10",
     "expo-clipboard": "~8.0.7",
     "expo-document-picker": "~14.0.7",
     "expo-file-system": "~19.0.19",

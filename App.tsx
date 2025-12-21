@@ -21,6 +21,8 @@ import {
   View,
   Linking,
   StatusBar as RNStatusBar,
+  PanResponder,
+  Animated,
 } from 'react-native';
 
 // Safe area insets for edge-to-edge mode
@@ -184,6 +186,10 @@ export default function App() {
   const [showVolumePanel, setShowVolumePanel] = useState(false);
   const [isMuted, setIsMuted] = useState(false);
 
+  // Drag and drop state
+  const [draggedStationId, setDraggedStationId] = useState<string | null>(null);
+  const [draggedOverIndex, setDraggedOverIndex] = useState<number | null>(null);
+
   // Import/Export State
   const [showImportModal, setShowImportModal] = useState(false);
   const [importStatus, setImportStatus] = useState<string | null>(null);
@@ -198,6 +204,7 @@ export default function App() {
   const metadataIntervalRef = useRef<ReturnType<typeof setInterval> | null>(
     null
   );
+  const stationRefsRef = useRef<Map<string, View>>(new Map());
 
   const resolvedTheme =
     themePref === 'auto'
@@ -312,6 +319,40 @@ let ipcListener: ((...args: unknown[]) => void) | null = null;
       }
     };
   }, []);
+
+  // Handle drag-end on mouse up
+  useEffect(() => {
+    const handleMouseMove = (e: MouseEvent) => {
+      if (!draggedStationId) return;
+
+      const elements = document.elementsFromPoint(e.clientX, e.clientY);
+      for (const el of elements) {
+        const stationId = (el as any).dataset?.stationId;
+        if (stationId) {
+          const index = stations.findIndex(s => s.id === stationId);
+          if (index >= 0) {
+            setDraggedOverIndex(index);
+          }
+          break;
+        }
+      }
+    };
+
+    const handleMouseUp = () => {
+      if (draggedStationId) {
+        handleStationDragEnd();
+      }
+    };
+
+    if (Platform.OS === 'web') {
+      window.addEventListener('mousemove', handleMouseMove);
+      window.addEventListener('mouseup', handleMouseUp);
+      return () => {
+        window.removeEventListener('mousemove', handleMouseMove);
+        window.removeEventListener('mouseup', handleMouseUp);
+      };
+    }
+  }, [draggedStationId, stations]);
 
   useEffect(() => {
     if (ipcRenderer?.send) {
@@ -714,80 +755,115 @@ let ipcListener: ((...args: unknown[]) => void) | null = null;
     setThemeMenuOpen(false);
   };
 
-  const renderStation = ({ item }: { item: Station }) => {
+  const handleStationLongPress = (station: Station) => {
+    setDraggedStationId(station.id);
+    closeStationMenu();
+  };
+
+  const handleStationDragEnd = () => {
+    if (draggedStationId && draggedOverIndex !== null) {
+      const fromIndex = stations.findIndex(s => s.id === draggedStationId);
+      if (fromIndex !== draggedOverIndex) {
+        const newStations = [...stations];
+        const [movedStation] = newStations.splice(fromIndex, 1);
+        newStations.splice(draggedOverIndex, 0, movedStation);
+        persistStations(newStations);
+      }
+    }
+    setDraggedStationId(null);
+    setDraggedOverIndex(null);
+  };
+
+  const renderStation = ({ item, index }: { item: Station; index: number }) => {
     const isCurrent = currentStation?.id === item.id;
     const playing = isCurrent && playbackState === 'playing';
     const highlighted =
       isCurrent && (playbackState === 'playing' || playbackState === 'loading');
     const showActions = contextStationId === item.id;
+    const isDragging = draggedStationId === item.id;
+    const isDraggedOver = draggedOverIndex === index;
+
     return (
-      <TouchableOpacity
-        activeOpacity={0.95}
-        onPress={() => handleStationPress(item)}
+      <View
         style={[
-          styles.card,
-          highlighted && styles.activeCard,
-          playing && styles.playingCard,
+          isDraggedOver && styles.draggedOverCard,
         ]}
+        {...(Platform.OS === 'web' && { 'data-station-id': item.id } as any)}
       >
-        <View style={styles.cardMain}>
-          <View style={styles.cardText}>
-            <Text style={styles.cardTitle} numberOfLines={1}>
-              {item.name}
-            </Text>
-            <Text style={styles.cardSubtitle} numberOfLines={1}>
-              {item.url}
-            </Text>
-          </View>
-          <Pressable
-            onPress={() => toggleStationMenu(item.id)}
-            hitSlop={6}
-            style={({ hovered, pressed }: PressableState) => [
-              styles.cardMenuButton,
-              (hovered || pressed) && styles.cardMenuButtonActive,
-              showActions && styles.cardMenuButtonActive,
-            ]}
-          >
-            <Text style={styles.cardMenuIcon}>⋮</Text>
-          </Pressable>
-        </View>
-        {showActions ? (
-          <View style={styles.cardMenuSheet}>
+        <Pressable
+          onLongPress={() => handleStationLongPress(item)}
+          delayLongPress={500}
+        >
+        <TouchableOpacity
+          activeOpacity={0.95}
+          onPress={() => !isDragging && handleStationPress(item)}
+          style={[
+            styles.card,
+            highlighted && styles.activeCard,
+            playing && styles.playingCard,
+            isDragging && styles.draggingCard,
+          ]}
+        >
+          <View style={styles.cardMain}>
+            <View style={styles.cardText}>
+              <Text style={styles.cardTitle} numberOfLines={1}>
+                {item.name}
+              </Text>
+              <Text style={styles.cardSubtitle} numberOfLines={1}>
+                {item.url}
+              </Text>
+            </View>
             <Pressable
+              onPress={() => toggleStationMenu(item.id)}
+              hitSlop={6}
               style={({ hovered, pressed }: PressableState) => [
-                styles.cardMenuItem,
-                (hovered || pressed) && styles.cardMenuItemActive,
+                styles.cardMenuButton,
+                (hovered || pressed) && styles.cardMenuButtonActive,
+                showActions && styles.cardMenuButtonActive,
               ]}
-              onPress={() => openEditModal(item)}
             >
-              <Text style={styles.cardMenuLabel}>Edit</Text>
-            </Pressable>
-            <View style={styles.menuDivider} />
-            <Pressable
-              style={({ hovered, pressed }: PressableState) => [
-                styles.cardMenuItem,
-                (hovered || pressed) && styles.cardMenuItemActive,
-              ]}
-              onPress={() => {
-                closeStationMenu();
-                handleRemove(item.id);
-              }}
-            >
-              <Text style={styles.cardMenuLabel}>Remove</Text>
-            </Pressable>
-            <View style={styles.menuDivider} />
-            <Pressable
-              style={({ hovered, pressed }: PressableState) => [
-                styles.cardMenuItem,
-                (hovered || pressed) && styles.cardMenuItemActive,
-              ]}
-              onPress={closeStationMenu}
-            >
-              <Text style={styles.cardMenuLabel}>Close</Text>
+              <Text style={styles.cardMenuIcon}>⋮</Text>
             </Pressable>
           </View>
-        ) : null}
-      </TouchableOpacity>
+          {showActions ? (
+            <View style={styles.cardMenuSheet}>
+              <Pressable
+                style={({ hovered, pressed }: PressableState) => [
+                  styles.cardMenuItem,
+                  (hovered || pressed) && styles.cardMenuItemActive,
+                ]}
+                onPress={() => openEditModal(item)}
+              >
+                <Text style={styles.cardMenuLabel}>Edit</Text>
+              </Pressable>
+              <View style={styles.menuDivider} />
+              <Pressable
+                style={({ hovered, pressed }: PressableState) => [
+                  styles.cardMenuItem,
+                  (hovered || pressed) && styles.cardMenuItemActive,
+                ]}
+                onPress={() => {
+                  closeStationMenu();
+                  handleRemove(item.id);
+                }}
+              >
+                <Text style={styles.cardMenuLabel}>Remove</Text>
+              </Pressable>
+              <View style={styles.menuDivider} />
+              <Pressable
+                style={({ hovered, pressed }: PressableState) => [
+                  styles.cardMenuItem,
+                  (hovered || pressed) && styles.cardMenuItemActive,
+                ]}
+                onPress={closeStationMenu}
+              >
+                <Text style={styles.cardMenuLabel}>Close</Text>
+              </Pressable>
+            </View>
+          ) : null}
+        </TouchableOpacity>
+        </Pressable>
+      </View>
     );
   };
 
@@ -1124,28 +1200,20 @@ let ipcListener: ((...args: unknown[]) => void) | null = null;
             style={styles.inner}
             behavior={Platform.OS === 'ios' ? 'padding' : undefined}
           >
-            <FlatList
-              data={stations}
-              renderItem={renderStation}
-              keyExtractor={item => item.id}
-              extraData={{
-                contextStationId,
-                currentId: currentStation?.id,
-                playbackState,
-              }}
-              contentContainerStyle={styles.list}
+            <ScrollView
+              style={styles.list}
               showsVerticalScrollIndicator={false}
-            />
+              scrollEnabled={!draggedStationId}
+            >
+              {stations.map((item, index) => renderStation({ item, index }))}
+            </ScrollView>
           </KeyboardAvoidingView>
 
           <View
             style={[styles.bottomBar, { paddingBottom: INSETS.bottom + 8 }]}
           >
-            <TouchableOpacity
+            <View
               style={styles.nowPlayingInfo}
-              onPress={toggleVolumePanel}
-              activeOpacity={activeStation ? 0.7 : 1}
-              disabled={!activeStation}
             >
               <Text
                 style={styles.nowPlayingTitle}
@@ -1161,7 +1229,7 @@ let ipcListener: ((...args: unknown[]) => void) | null = null;
               >
                 {statusLabel}
               </Text>
-            </TouchableOpacity>
+            </View>
             <TouchableOpacity
               onPress={handlePrimaryControl}
               disabled={!activeStation}
@@ -1857,6 +1925,15 @@ const createStyles = (palette: Palette) =>
     },
     playingCard: {
       backgroundColor: palette.accentSoft,
+    },
+    draggingCard: {
+      opacity: 0.5,
+      backgroundColor: palette.neutral,
+    },
+    draggedOverCard: {
+      borderTopWidth: 2,
+      borderTopColor: palette.accentStrong,
+      marginTop: 8,
     },
     primaryButton: {
       backgroundColor: palette.accentSoft,
