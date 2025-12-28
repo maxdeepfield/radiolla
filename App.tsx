@@ -989,6 +989,19 @@ let ipcListener: ((...args: unknown[]) => void) | null = null;
     }
   };
 
+  const handleClearStations = async () => {
+    if (stations.length === 0) {
+      setImportStatus('Stations list is already empty.');
+      return;
+    }
+
+    await stopPlayback();
+    setLastStation(null);
+    setFilterText('');
+    await persistStations([]);
+    setImportStatus('Stations cleared.');
+  };
+
   const downloadFile = async (
     content: string,
     filename: string,
@@ -1522,6 +1535,21 @@ let ipcListener: ((...args: unknown[]) => void) | null = null;
                 <Text style={styles.buttonLabel}>Save PLS</Text>
               </TouchableOpacity>
             </View>
+
+            <TouchableOpacity
+              style={[
+                styles.button,
+                styles.destructiveButton,
+                { marginBottom: 10 },
+                stations.length === 0 && styles.disabledButton,
+              ]}
+              onPress={handleClearStations}
+              disabled={stations.length === 0}
+            >
+              <Text style={[styles.buttonLabel, styles.destructiveLabel]}>
+                Clear Stations
+              </Text>
+            </TouchableOpacity>
 
             <TouchableOpacity
               style={{ alignSelf: 'center', marginTop: 5 }}
