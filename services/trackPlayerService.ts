@@ -54,16 +54,17 @@ export async function PlaybackService() {
     } else if (event.permanent) {
       await TrackPlayer.stop();
     } else {
-      await TrackPlayer.setVolume(event.ducking ? 0.3 : 1);
+      // Ducking behavior (lower volume)
+      await TrackPlayer.setVolume(0.5);
     }
   });
 }
 
 let isSetup = false;
 
-export async function setupTrackPlayer(): Promise<boolean> {
-  if (isSetup) return true;
-  if (Platform.OS === 'web') return false;
+export async function setupTrackPlayer(): Promise<void> {
+  if (isSetup) return;
+  if (Platform.OS === 'web') return; // Guard against Web execution
 
   try {
     await TrackPlayer.setupPlayer({
@@ -81,11 +82,6 @@ export async function setupTrackPlayer(): Promise<boolean> {
         Capability.SkipToNext,
         Capability.SkipToPrevious,
       ],
-      compactCapabilities: [
-        Capability.Play,
-        Capability.Pause,
-        Capability.Stop,
-      ],
       notificationCapabilities: [
         Capability.Play,
         Capability.Pause,
@@ -97,10 +93,8 @@ export async function setupTrackPlayer(): Promise<boolean> {
 
     await TrackPlayer.setRepeatMode(RepeatMode.Off);
     isSetup = true;
-    return true;
   } catch (error) {
     console.error('Failed to setup TrackPlayer:', error);
-    return false;
   }
 }
 
@@ -109,7 +103,7 @@ export async function playStream(
   title: string,
   artist: string = 'Radiolla'
 ): Promise<void> {
-  if (Platform.OS === 'web') return;
+  if (Platform.OS === 'web') return; // Guard against Web execution
 
   try {
     await TrackPlayer.reset();
@@ -128,7 +122,7 @@ export async function playStream(
 }
 
 export async function stopStream(): Promise<void> {
-  if (Platform.OS === 'web') return;
+  if (Platform.OS === 'web') return; // Guard against Web execution
 
   try {
     await TrackPlayer.stop();
@@ -139,7 +133,7 @@ export async function stopStream(): Promise<void> {
 }
 
 export async function pauseStream(): Promise<void> {
-  if (Platform.OS === 'web') return;
+  if (Platform.OS === 'web') return; // Guard against Web execution
 
   try {
     await TrackPlayer.pause();
@@ -149,7 +143,7 @@ export async function pauseStream(): Promise<void> {
 }
 
 export async function resumeStream(): Promise<void> {
-  if (Platform.OS === 'web') return;
+  if (Platform.OS === 'web') return; // Guard against Web execution
 
   try {
     await TrackPlayer.play();
@@ -159,7 +153,7 @@ export async function resumeStream(): Promise<void> {
 }
 
 export async function setTrackPlayerVolume(volume: number): Promise<void> {
-  if (Platform.OS === 'web') return;
+  if (Platform.OS === 'web') return; // Guard against Web execution
 
   try {
     await TrackPlayer.setVolume(volume);
@@ -172,7 +166,7 @@ export async function updateTrackMetadata(
   title: string,
   artist: string = 'Radiolla'
 ): Promise<void> {
-  if (Platform.OS === 'web') return;
+  if (Platform.OS === 'web') return; // Guard against Web execution
 
   try {
     await TrackPlayer.updateNowPlayingMetadata({
@@ -185,7 +179,7 @@ export async function updateTrackMetadata(
 }
 
 export async function getPlayerState(): Promise<State | null> {
-  if (Platform.OS === 'web') return null;
+  if (Platform.OS === 'web') return null; // Guard against Web execution
 
   try {
     return await TrackPlayer.getPlaybackState().then((state: PlaybackState) => state.state);

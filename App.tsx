@@ -185,6 +185,8 @@ export default function App() {
   const [volume, setVolume] = useState(1.0);
   const [showVolumePanel, setShowVolumePanel] = useState(false);
   const [isMuted, setIsMuted] = useState(false);
+  const [showSearch, setShowSearch] = useState(false);
+  const [filterText, setFilterText] = useState('');
 
   // Drag and drop state
   const [draggedStationId, setDraggedStationId] = useState<string | null>(null);
@@ -216,6 +218,12 @@ export default function App() {
   const styles = useMemo(() => createStyles(palette), [palette]);
   const statusBarStyle = resolvedTheme === 'dark' ? 'light' : 'dark';
 
+  const filteredStations = useMemo(() => {
+    if (!filterText.trim()) return stations;
+    const lower = filterText.toLowerCase();
+    return stations.filter(s => s.name.toLowerCase().includes(lower));
+  }, [stations, filterText]);
+
   useEffect(() => {
     const bootstrap = async () => {
       try {
@@ -225,7 +233,7 @@ export default function App() {
         audioServiceRef.current = getAudioService();
 
         // Set up TrackPlayer callbacks for notification controls (Android/iOS)
-        if (Platform.OS !== 'web' && audioServiceRef.current?.setCallbacks) {
+        if (audioServiceRef.current?.setCallbacks) {
           audioServiceRef.current.setCallbacks({
             onPlay: () => {
               // Resume playback from notification - for live streams, restart
@@ -432,8 +440,7 @@ let ipcListener: ((...args: unknown[]) => void) | null = null;
       if (
         audioService &&
         currentStation &&
-        playbackState === 'playing' &&
-        Platform.OS !== 'web'
+        playbackState === 'playing'
       ) {
         try {
           // Update TrackPlayer notification metadata
@@ -1090,16 +1097,50 @@ let ipcListener: ((...args: unknown[]) => void) | null = null;
               <Text style={styles.heading}>Radiolla</Text>
               <Text style={styles.headingBadge}>Absolute Freakout</Text>
             </View>
-            <TouchableOpacity
-              style={styles.menuButton}
-              onPress={toggleMenu}
-              activeOpacity={0.8}
-            >
-              <View style={styles.menuIconLine} />
-              <View style={styles.menuIconLine} />
-              <View style={styles.menuIconLine} />
-            </TouchableOpacity>
+            <View style={styles.topBarActions}>
+              <TouchableOpacity
+                style={[styles.menuButton, styles.searchButton]}
+                onPress={() => {
+                  setShowSearch(prev => !prev);
+                  if (showSearch) setFilterText('');
+                }}
+                activeOpacity={0.8}
+              >
+                <Text style={styles.searchIcon}>🔍</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.menuButton}
+                onPress={toggleMenu}
+                activeOpacity={0.8}
+              >
+                <View style={styles.menuIconLine} />
+                <View style={styles.menuIconLine} />
+                <View style={styles.menuIconLine} />
+              </TouchableOpacity>
+            </View>
           </View>
+
+          {showSearch && (
+            <View style={styles.searchBar}>
+              <TextInput
+                style={styles.searchInput}
+                placeholder="Filter stations..."
+                placeholderTextColor={palette.textSecondary}
+                value={filterText}
+                onChangeText={setFilterText}
+                autoFocus
+              />
+              <TouchableOpacity
+                style={styles.searchCloseButton}
+                onPress={() => {
+                  setFilterText('');
+                  setShowSearch(false);
+                }}
+              >
+                <Text style={styles.searchCloseLabel}>Clear</Text>
+              </TouchableOpacity>
+            </View>
+          )}
 
           {menuOpen && (
             <>
@@ -1205,7 +1246,7 @@ let ipcListener: ((...args: unknown[]) => void) | null = null;
               showsVerticalScrollIndicator={false}
               scrollEnabled={!draggedStationId}
             >
-              {stations.map((item, index) => renderStation({ item, index }))}
+              {filteredStations.map((item, index) => renderStation({ item, index }))}
             </ScrollView>
           </KeyboardAvoidingView>
 
@@ -1995,6 +2036,50 @@ const createStyles = (palette: Palette) =>
       flexDirection: 'row',
       marginBottom: 8,
       overflow: 'hidden',
+    },
+    topBarActions: {
+      flexDirection: 'row',
+      gap: 8,
+    },
+    searchButton: {
+      width: 38,
+    },
+    searchIcon: {
+      fontSize: 16,
+    },
+    searchBar: {
+      backgroundColor: palette.surface,
+      borderBottomWidth: 1,
+      borderColor: palette.border,
+      flexDirection: 'row',
+      gap: 8,
+      padding: 10,
+    },
+    searchInput: {
+      backgroundColor: palette.background,
+      borderColor: palette.border,
+      borderRadius: 4,
+      borderWidth: 1,
+      color: palette.textPrimary,
+      flex: 1,
+      fontFamily: fonts.regular,
+      fontSize: 14,
+      paddingHorizontal: 10,
+      paddingVertical: 6,
+    },
+    searchCloseButton: {
+      alignItems: 'center',
+      backgroundColor: palette.neutral,
+      borderColor: palette.border,
+      borderRadius: 4,
+      borderWidth: 1,
+      justifyContent: 'center',
+      paddingHorizontal: 12,
+    },
+    searchCloseLabel: {
+      color: palette.textPrimary,
+      fontFamily: fonts.medium,
+      fontSize: 12,
     },
     topBar: {
       alignItems: 'center',

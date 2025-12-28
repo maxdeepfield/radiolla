@@ -22,7 +22,7 @@ export type AudioService = {
   updateMetadata: (title: string, artist?: string) => Promise<void>;
 };
 
-// Web/Electron audio service using expo-audio
+// Web/Electron audio service using expo-audio as requested
 class ExpoAudioService implements AudioService {
   private player: AudioPlayer | null = null;
   private currentUrl: string | null = null;
@@ -114,7 +114,8 @@ class TrackPlayerAudioService implements AudioService {
   async play(url: string, stationName: string): Promise<void> {
     try {
       if (!this.isInitialized) {
-        this.isInitialized = await setupTrackPlayer();
+        await setupTrackPlayer();
+        this.isInitialized = true;
       }
       if (!this.isInitialized) {
         throw new Error('TrackPlayer not initialized');
@@ -171,27 +172,30 @@ let sharedService: AudioService | null = null;
 
 export function getAudioService(): AudioService {
   if (!sharedService) {
-    // Use TrackPlayer on mobile for proper background playback and notification controls
-    if (Platform.OS === 'android' || Platform.OS === 'ios') {
-      sharedService = new TrackPlayerAudioService();
-    } else {
+    if (Platform.OS === 'web') {
       sharedService = new ExpoAudioService();
+    } else {
+      sharedService = new TrackPlayerAudioService();
     }
   }
   return sharedService;
 }
 
 export async function initializeAudioMode(): Promise<void> {
-  // Still set audio mode for expo-audio (used as fallback and for web)
-  await setAudioModeAsync({
-    playsInSilentMode: true,
-    shouldPlayInBackground: true,
-    interruptionMode: 'duckOthers',
-    interruptionModeAndroid: 'duckOthers',
-  });
+  // Still set audio mode for expo-audio (especially needed for web)
+  try {
+      await setAudioModeAsync({
+        playsInSilentMode: true,
+        shouldPlayInBackground: true,
+        interruptionMode: 'duckOthers',
+        interruptionModeAndroid: 'duckOthers',
+      });
+  } catch (error) {
+      // Ignore audio mode errors
+  }
 
-  // Initialize TrackPlayer on mobile
-  if (Platform.OS === 'android' || Platform.OS === 'ios') {
+  // Initialize TrackPlayer only on mobile
+  if (Platform.OS !== 'web') {
     await setupTrackPlayer();
   }
 }
