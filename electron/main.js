@@ -4,6 +4,23 @@ const http = require('http');
 const url = require('url');
 const { app, BrowserWindow, shell, Tray, Menu, ipcMain } = require('electron');
 
+// Single Instance Lock
+const gotTheLock = app.requestSingleInstanceLock();
+
+if (!gotTheLock) {
+  app.quit();
+  return; // Stop execution if we don't have the lock
+} else {
+  app.on('second-instance', (event, commandLine, workingDirectory) => {
+    // Someone tried to run a second instance, we should focus our window.
+    if (mainWindow) {
+      if (mainWindow.isMinimized()) mainWindow.restore();
+      if (!mainWindow.isVisible()) mainWindow.show();
+      mainWindow.focus();
+    }
+  });
+}
+
 const mimeTypes = {
   '.css': 'text/css',
   '.html': 'text/html',

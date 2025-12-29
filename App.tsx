@@ -21,7 +21,6 @@ import {
   View,
   Linking,
   StatusBar as RNStatusBar,
-  PanResponder,
   Animated,
 } from 'react-native';
 
@@ -183,8 +182,7 @@ export default function App() {
   const [aboutVisible, setAboutVisible] = useState(false);
   const [unexpectedError, setUnexpectedError] = useState<string | null>(null);
   const [volume, setVolume] = useState(1.0);
-  const [showVolumePanel, setShowVolumePanel] = useState(false);
-  const [isMuted, setIsMuted] = useState(false);
+  const [showVolumeSlider, setShowVolumeSlider] = useState(false);
   const [showSearch, setShowSearch] = useState(false);
   const [filterText, setFilterText] = useState('');
 
@@ -200,9 +198,7 @@ export default function App() {
   const stopPlaybackRef = useRef<() => Promise<void>>(async () => undefined);
   const primaryControlRef = useRef<() => void>(() => {});
   const trayPlayRef = useRef<() => void>(() => {});
-  const trayMuteRef = useRef<() => void>(() => {});
   const playStationRef = useRef<(station: Station) => void>(() => {});
-  const lastVolumeRef = useRef(1);
   const metadataIntervalRef = useRef<ReturnType<typeof setInterval> | null>(
     null
   );
@@ -298,9 +294,6 @@ let ipcListener: ((...args: unknown[]) => void) | null = null;
             case 'stop':
               stopPlaybackRef.current();
               break;
-            case 'mute':
-              trayMuteRef.current();
-              break;
             default:
               break;
           }
@@ -361,12 +354,6 @@ let ipcListener: ((...args: unknown[]) => void) | null = null;
       };
     }
   }, [draggedStationId, stations]);
-
-  useEffect(() => {
-    if (ipcRenderer?.send) {
-      ipcRenderer.send('playback-mute-state', { isMuted });
-    }
-  }, [isMuted]);
 
   // Sync playback state to Electron tray
   useEffect(() => {
@@ -1031,41 +1018,27 @@ let ipcListener: ((...args: unknown[]) => void) | null = null;
     }
   };
 
-  const toggleVolumePanel = () => {
-    if (activeStation) {
-      setShowVolumePanel(prev => !prev);
-    }
-  };
+  const VOLUME_TRACK_HEIGHT = 120;
 
   const handleVolumeChange = async (newVolume: number) => {
-    setVolume(newVolume);
-    setIsMuted(newVolume === 0);
-    if (newVolume > 0) {
-      lastVolumeRef.current = newVolume;
-    }
+    const clamped = Math.max(0, Math.min(1, newVolume));
+    setVolume(clamped);
 
     const audioService = audioServiceRef.current;
     if (audioService) {
       try {
-        await audioService.setVolume(newVolume);
+        await audioService.setVolume(clamped);
       } catch {
         // ignore volume change errors
       }
     }
 
   };
-
-  const toggleMute = () => {
-    if (isMuted) {
-      void handleVolumeChange(lastVolumeRef.current || 1);
-    } else {
-      if (volume > 0) {
-        lastVolumeRef.current = volume;
-      }
-      void handleVolumeChange(0);
-    }
+  const handleVolumeGesture = (event: any) => {
+    const { locationY } = event.nativeEvent;
+    const normalized = 1 - locationY / VOLUME_TRACK_HEIGHT;
+    void handleVolumeChange(normalized);
   };
-  trayMuteRef.current = toggleMute;
 
   const handlePrimaryControl = () => {
     const target = currentStation || lastStation;
@@ -1119,7 +1092,7 @@ let ipcListener: ((...args: unknown[]) => void) | null = null;
                 }}
                 activeOpacity={0.8}
               >
-                <Text style={styles.searchIcon}>🔍</Text>
+              <Text style={styles.searchIcon}>⌕</Text>
               </TouchableOpacity>
               <TouchableOpacity
                 style={styles.menuButton}
@@ -1284,91 +1257,61 @@ let ipcListener: ((...args: unknown[]) => void) | null = null;
                 {statusLabel}
               </Text>
             </View>
-            <TouchableOpacity
-              onPress={handlePrimaryControl}
-              disabled={!activeStation}
-              style={[
-                styles.button,
-                playbackState === 'playing' || playbackState === 'loading'
-                  ? styles.secondaryButton
-                  : styles.primaryButton,
-                styles.controlButton,
-                !activeStation && styles.disabledButton,
-              ]}
-              accessibilityLabel={
-                playbackState === 'playing' || playbackState === 'loading'
-                  ? 'Stop'
-                  : 'Play'
-              }
-            >
-              <Text style={styles.controlIcon}>{controlIcon}</Text>
-            </TouchableOpacity>
-          </View>
-
-          {showVolumePanel && activeStation && (
-            <View style={styles.volumePanel}>
-              <View style={styles.volumeHeader}>
-                <Text style={styles.volumeLabel}>Volume</Text>
-                <Text style={styles.volumeValue}>
-                  {Math.round(volume * 100)}%
-                </Text>
-              </View>
-              <View style={styles.volumeSliderContainer}>
-                <TouchableOpacity
-                  onPress={() => handleVolumeChange(0)}
-                  style={styles.volumeIcon}
-                >
-                  <Text style={styles.volumeIconText}>🔈</Text>
-                </TouchableOpacity>
-                <View style={styles.volumeTrack}>
+            <View style={styles.bottomControls}>
+              {showVolumeSlider && (
+                <View style={styles.volumePopover}>
+                  <Text style={styles.volumeValueLabel}>
+                    {Math.round(volume * 100)}%
+                  </Text>
                   <View
-                    style={[styles.volumeFill, { width: `${volume * 100}%` }]}
-                  />
-                  <Pressable
-                    style={styles.volumeSliderTouch}
-                    onPress={e => {
-                      const { locationX } = e.nativeEvent;
-                      const trackWidth = 200;
-                      const newVolume = Math.max(
-                        0,
-                        Math.min(1, locationX / trackWidth)
-                      );
-                      handleVolumeChange(newVolume);
-                    }}
-                  />
-                </View>
-                <TouchableOpacity
-                  onPress={() => handleVolumeChange(1)}
-                  style={styles.volumeIcon}
-                >
-                  <Text style={styles.volumeIconText}>🔊</Text>
-                </TouchableOpacity>
-              </View>
-              <View style={styles.volumePresets}>
-                {[0, 0.25, 0.5, 0.75, 1].map(preset => (
-                  <TouchableOpacity
-                    key={preset}
-                    style={[
-                      styles.volumePreset,
-                      Math.abs(volume - preset) < 0.05 &&
-                        styles.volumePresetActive,
-                    ]}
-                    onPress={() => handleVolumeChange(preset)}
+                    style={styles.volumeTrackVertical}
+                    onStartShouldSetResponder={() => true}
+                    onResponderGrant={handleVolumeGesture}
+                    onResponderMove={handleVolumeGesture}
+                    onResponderRelease={handleVolumeGesture}
                   >
-                    <Text style={styles.volumePresetLabel}>
-                      {Math.round(preset * 100)}%
-                    </Text>
-                  </TouchableOpacity>
-                ))}
-              </View>
+                    <View
+                      style={[
+                        styles.volumeFillVertical,
+                        { height: `${volume * 100}%` },
+                      ]}
+                    />
+                    <View
+                      style={[
+                        styles.volumeThumb,
+                        { bottom: `${volume * 100}%` },
+                      ]}
+                    />
+                  </View>
+                </View>
+              )}
               <TouchableOpacity
-                style={styles.volumeClose}
-                onPress={() => setShowVolumePanel(false)}
+                onPress={() => setShowVolumeSlider(prev => !prev)}
+                style={[styles.button, styles.secondaryButton, styles.volumeButton]}
               >
-                <Text style={styles.volumeCloseLabel}>Done</Text>
+                <Text style={styles.volumeButtonLabel}>VOL</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={handlePrimaryControl}
+                disabled={!activeStation}
+                style={[
+                  styles.button,
+                  playbackState === 'playing' || playbackState === 'loading'
+                    ? styles.secondaryButton
+                    : styles.primaryButton,
+                  styles.controlButton,
+                  !activeStation && styles.disabledButton,
+                ]}
+                accessibilityLabel={
+                  playbackState === 'playing' || playbackState === 'loading'
+                    ? 'Stop'
+                    : 'Play'
+                }
+              >
+                <Text style={styles.controlIcon}>{controlIcon}</Text>
               </TouchableOpacity>
             </View>
-          )}
+          </View>
         </View>
       </View>
 
@@ -1585,6 +1528,12 @@ const createStyles = (palette: Palette) =>
       justifyContent: 'space-between',
       paddingHorizontal: 14,
       paddingVertical: 8,
+    },
+    bottomControls: {
+      alignItems: 'flex-end',
+      flexDirection: 'row',
+      gap: 8,
+      position: 'relative',
     },
     button: {
       alignItems: 'center',
@@ -2073,6 +2022,8 @@ const createStyles = (palette: Palette) =>
       width: 38,
     },
     searchIcon: {
+      color: palette.textPrimary,
+      fontFamily: fonts.bold,
       fontSize: 16,
     },
     searchBar: {
@@ -2120,107 +2071,67 @@ const createStyles = (palette: Palette) =>
       paddingHorizontal: 14,
       paddingTop: 6,
     },
-    volumeClose: {
-      alignItems: 'center',
-      backgroundColor: palette.accentSoft,
-      borderColor: palette.accentStrong,
-      borderRadius: 6,
-      borderStyle: 'dashed',
-      borderWidth: 1,
-      paddingVertical: 10,
+    volumeButton: {
+      borderRadius: 8,
+      flexGrow: 0,
+      paddingHorizontal: 10,
+      paddingVertical: 6,
     },
-    volumeCloseLabel: {
+    volumeButtonLabel: {
       color: palette.textPrimary,
       fontFamily: fonts.bold,
-      fontSize: 13,
-      fontWeight: '700',
+      fontSize: 11,
+      letterSpacing: 1,
     },
-    volumeFill: {
+    volumeFillVertical: {
       backgroundColor: palette.accentStrong,
-      borderRadius: 4,
       bottom: 0,
       left: 0,
       position: 'absolute',
-      top: 0,
+      right: 0,
     },
-    volumeHeader: {
+    volumePopover: {
       alignItems: 'center',
-      flexDirection: 'row',
-      justifyContent: 'space-between',
-    },
-    volumeIcon: {
-      padding: 4,
-    },
-    volumeIconText: {
-      fontSize: 18,
-    },
-    volumeLabel: {
-      color: palette.textPrimary,
-      fontFamily: fonts.bold,
-      fontSize: 14,
-      fontWeight: '700',
-    },
-    volumePanel: {
       backgroundColor: palette.surface,
       borderColor: palette.borderStrong,
       borderRadius: 10,
       borderStyle: 'dashed',
       borderWidth: 1,
-      bottom: 70,
-      elevation: 8,
-      gap: 12,
-      left: 14,
-      padding: 14,
+      bottom: 56,
+      gap: 8,
+      padding: 10,
       position: 'absolute',
-      right: 14,
+      right: 0,
       shadowColor: '#000',
-      shadowOffset: { width: 0, height: -2 },
+      shadowOffset: { width: 0, height: 4 },
       shadowOpacity: 0.2,
       shadowRadius: 8,
     },
-    volumePreset: {
-      alignItems: 'center',
-      backgroundColor: palette.background,
-      borderColor: palette.border,
+    volumeThumb: {
+      backgroundColor: palette.surface,
+      borderColor: palette.borderStrong,
       borderRadius: 6,
       borderWidth: 1,
-      flex: 1,
-      paddingVertical: 8,
+      height: 12,
+      left: -2,
+      position: 'absolute',
+      right: -2,
+      transform: [{ translateY: 6 }],
     },
-    volumePresetActive: {
-      backgroundColor: palette.accentSoft,
-      borderColor: palette.accentStrong,
-    },
-    volumePresetLabel: {
-      color: palette.textSecondary,
-      fontFamily: fonts.medium,
-      fontSize: 11,
-    },
-    volumePresets: {
-      flexDirection: 'row',
-      gap: 6,
-      justifyContent: 'space-between',
-    },
-    volumeSliderContainer: {
-      alignItems: 'center',
-      flexDirection: 'row',
-      gap: 10,
-    },
-    volumeSliderTouch: {
-      ...StyleSheet.absoluteFillObject,
-    },
-    volumeTrack: {
-      backgroundColor: palette.neutral,
-      borderRadius: 4,
-      flex: 1,
-      height: 8,
+    volumeTrackVertical: {
+      backgroundColor: palette.background,
+      borderColor: palette.border,
+      borderRadius: 10,
+      borderWidth: 1,
+      height: 120,
       overflow: 'hidden',
       position: 'relative',
+      width: 12,
     },
-    volumeValue: {
+    volumeValueLabel: {
       color: palette.textSecondary,
       fontFamily: fonts.medium,
-      fontSize: 13,
+      fontSize: 12,
     },
     webWrapper: {
       alignItems: 'center',
