@@ -66,7 +66,7 @@ export function PlayerBar({
           onPress={onVolumeToggle}
           style={[styles.button, styles.secondaryButton, styles.volumeButton]}
         >
-          <Text style={styles.volumeButtonLabel}>VOL</Text>
+          <Text style={styles.volumeIcon}>🔊</Text>
         </TouchableOpacity>
         <TouchableOpacity
           onPress={handlePrimaryControl}

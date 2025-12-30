@@ -1,8 +1,8 @@
 import React from 'react';
-import { View, Text } from 'react-native';
+import { View } from 'react-native';
 import { useSettings } from '../context/SettingsContext';
 
-const VOLUME_TRACK_HEIGHT = 120;
+const VOLUME_TRACK_HEIGHT = 160;
 
 type VolumeSliderProps = {
   volume: number;
@@ -21,7 +21,6 @@ export function VolumeSlider({ volume, onVolumeChange }: VolumeSliderProps) {
 
   return (
     <View style={styles.volumePopover}>
-      <Text style={styles.volumeValueLabel}>{Math.round(volume * 100)}%</Text>
       <View
         style={styles.volumeTrackVertical}
         onStartShouldSetResponder={() => true}
