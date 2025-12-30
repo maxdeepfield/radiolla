@@ -1,36 +1,41 @@
 {
   "name": "radiolla",
   "version": "1.0.0",
-  "description": "Hipster-friendly radio manager built with Expo and Electron for custom streams and lightweight playback notifications across desktop, mobile, and web.",
+  "description": "Cross-platform radio streaming app. Add any stream URL and listen on desktop, mobile, or web.",
   "main": "index.ts",
   "scripts": {
     "start": "expo start",
+    "web": "expo start --web",
     "android": "expo run:android",
     "ios": "expo run:ios",
-    "web": "expo start --web",
+
     "electron": "concurrently \"cross-env EXPO_NO_WEB_BROWSER=1 expo start --web\" \"node electron/run-electron.js\"",
     "electron:build": "npm run web:export && electron-builder --win --publish never",
     "web:export": "expo export --platform web --output-dir dist",
+
+    "android:dev": "npm run android:prebuild && npm run android:build:debug && npm run android:install && npm run android:launch",
+    "android:release": "npm run android:clean && npm run android:prebuild && npm run android:build:release && npm run android:install:release && npm run android:launch",
+    "android:prebuild": "expo prebuild --platform android --clean",
+    "android:build:debug": "cd android && gradle assembleDebug",
+    "android:build:release": "cd android && .\\gradlew.bat assembleRelease",
+    "android:install": "adb install -r android/app/build/outputs/apk/debug/app-debug.apk",
+    "android:install:release": "adb install -r android/app/build/outputs/apk/release/app-release.apk",
+    "android:launch": "adb shell am start -n com.anonymous.radiolla/.MainActivity",
+    "android:clean": "cd android && .\\gradlew.bat clean",
+    "android:logcat": "adb logcat -s ReactNativeJS:V ReactNative:V",
+    "android:uninstall": "adb uninstall com.anonymous.radiolla",
+
     "typecheck": "tsc --noEmit",
     "lint": "eslint . --ext .ts,.tsx",
     "lint:fix": "eslint . --ext .ts,.tsx --fix",
     "format": "prettier --write \"**/*.{ts,tsx,js,jsx,json,md}\"",
     "format:check": "prettier --check \"**/*.{ts,tsx,js,jsx,json,md}\"",
-    "prepare": "husky",
-    "android:prebuild": "expo prebuild --platform android --clean",
-    "android:build:debug": "cd android && cross-env NODE_ENV=development gradle assembleDebug",
-    "android:build:release": "cd android && .\\gradlew.bat assembleRelease",
-    "android:clean": "cd android && .\\gradlew.bat clean",
-    "android:install:debug": "adb install -r build/outputs/apk/debug/app-debug.apk",
-    "android:install:release": "adb install -r android/app/build/outputs/apk/release/app-release.apk",
-    "android:launch": "adb shell am start -n com.anonymous.radiolla/.MainActivity",
-    "android:uninstall": "adb uninstall com.anonymous.radiolla",
-    "android:logcat": "adb logcat -s ReactNativeJS:V ReactNative:V",
-    "android:dev": "npm run android:prebuild && npm run android:build:debug && npm run android:install:debug && npm run android:launch",
-    "android:release": "npm run android:clean && npm run android:prebuild && npm run android:build:release && npm run android:install:release && npm run android:launch && npm run android:logcat",
     "check": "npm run typecheck && npm run lint",
-    "clean": "npm run android:clean && rimraf dist build release",
-    "postinstall": "node patch-rntp.js"
+
+    "clean": "rimraf dist build release android/app/build",
+    "prepare": "husky",
+    "postinstall": "node patch-rntp.js",
+    "generate:icon": "png-to-ico assets/icon.png > assets/icon.ico"
   },
   "dependencies": {
     "@expo-google-fonts/roboto-condensed": "^0.4.2",
@@ -69,6 +74,7 @@
     "eslint-plugin-react-native": "^4.1.0",
     "husky": "^9.1.7",
     "lint-staged": "^16.2.7",
+    "png-to-ico": "^3.0.1",
     "prettier": "^3.7.4",
     "typescript": "~5.9.2",
     "wait-on": "^9.0.3"
@@ -89,7 +95,7 @@
       "main": "electron/main.js"
     },
     "win": {
-      "icon": "assets/radiolla_icon.ico",
+      "icon": "assets/icon.ico",
       "target": [
         {
           "target": "nsis",
@@ -99,9 +105,9 @@
       "artifactName": "Radiolla-Setup-${version}-${arch}.${ext}"
     },
     "nsis": {
-      "installerIcon": "assets/radiolla_icon.ico",
-      "uninstallerIcon": "assets/radiolla_icon.ico",
-      "installerHeaderIcon": "assets/radiolla_icon.ico"
+      "installerIcon": "assets/icon.ico",
+      "uninstallerIcon": "assets/icon.ico",
+      "installerHeaderIcon": "assets/icon.ico"
     }
   },
   "lint-staged": {

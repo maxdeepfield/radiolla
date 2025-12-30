@@ -19,7 +19,9 @@ export type TrackPlayerServiceCallbacks = {
 
 let serviceCallbacks: TrackPlayerServiceCallbacks = {};
 
-export function setTrackPlayerCallbacks(callbacks: TrackPlayerServiceCallbacks) {
+export function setTrackPlayerCallbacks(
+  callbacks: TrackPlayerServiceCallbacks
+) {
   serviceCallbacks = callbacks;
 }
 
@@ -48,16 +50,19 @@ export async function PlaybackService() {
     serviceCallbacks.onPrevious?.();
   });
 
-  TrackPlayer.addEventListener(Event.RemoteDuck, async (event: RemoteDuckEvent) => {
-    if (event.paused) {
-      await TrackPlayer.pause();
-    } else if (event.permanent) {
-      await TrackPlayer.stop();
-    } else {
-      // Ducking behavior (lower volume)
-      await TrackPlayer.setVolume(0.5);
+  TrackPlayer.addEventListener(
+    Event.RemoteDuck,
+    async (event: RemoteDuckEvent) => {
+      if (event.paused) {
+        await TrackPlayer.pause();
+      } else if (event.permanent) {
+        await TrackPlayer.stop();
+      } else {
+        // Ducking behavior (lower volume)
+        await TrackPlayer.setVolume(0.5);
+      }
     }
-  });
+  );
 }
 
 let isSetup = false;
@@ -182,7 +187,9 @@ export async function getPlayerState(): Promise<State | null> {
   if (Platform.OS === 'web') return null; // Guard against Web execution
 
   try {
-    return await TrackPlayer.getPlaybackState().then((state: PlaybackState) => state.state);
+    return await TrackPlayer.getPlaybackState().then(
+      (state: PlaybackState) => state.state
+    );
   } catch {
     return null;
   }

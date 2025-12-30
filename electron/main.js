@@ -44,8 +44,7 @@ let mainWindow;
 let muteMenuItem = null;
 let pendingMuteState = null;
 let isPlaying = false;
-const iconFileName =
-  process.platform === 'win32' ? 'radiolla_icon.ico' : 'radiolla_icon.png';
+const iconFileName = 'favicon.ico';
 const STATIC_HOST = '127.0.0.1';
 const STATIC_PORT = 19573;
 

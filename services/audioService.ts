@@ -159,7 +159,10 @@ class TrackPlayerAudioService implements AudioService {
     setTrackPlayerCallbacks(callbacks);
   }
 
-  async updateMetadata(title: string, artist: string = 'Radiolla'): Promise<void> {
+  async updateMetadata(
+    title: string,
+    artist: string = 'Radiolla'
+  ): Promise<void> {
     try {
       await updateTrackMetadata(title, artist);
     } catch (error) {
@@ -184,14 +187,14 @@ export function getAudioService(): AudioService {
 export async function initializeAudioMode(): Promise<void> {
   // Still set audio mode for expo-audio (especially needed for web)
   try {
-      await setAudioModeAsync({
-        playsInSilentMode: true,
-        shouldPlayInBackground: true,
-        interruptionMode: 'duckOthers',
-        interruptionModeAndroid: 'duckOthers',
-      });
+    await setAudioModeAsync({
+      playsInSilentMode: true,
+      shouldPlayInBackground: true,
+      interruptionMode: 'duckOthers',
+      interruptionModeAndroid: 'duckOthers',
+    });
   } catch (error) {
-      // Ignore audio mode errors
+    // Ignore audio mode errors
   }
 
   // Initialize TrackPlayer only on mobile

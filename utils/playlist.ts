@@ -1,4 +1,4 @@
-import { Station } from '../App';
+import { Station } from '../client/context/StationsContext';
 
 export const parsePlaylist = (content: string): Station[] => {
   const lines = content.split(/\r?\n/);
