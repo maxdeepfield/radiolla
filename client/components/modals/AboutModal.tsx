@@ -52,8 +52,8 @@ export function AboutModal({ visible, onClose }: AboutModalProps) {
         <View style={styles.infoCard}>
           <Text style={styles.modalTitle}>About Radiolla</Text>
           <Text style={styles.infoBody}>
-            Cross-platform radio streaming app. Add any stream URL and listen
-            on desktop, mobile, or web.
+            Cross-platform radio streaming app. Add any stream URL and listen on
+            desktop, mobile, or web.
           </Text>
           <Text style={styles.infoMeta}>Version {APP_VERSION}</Text>
           <View style={styles.linkList}>

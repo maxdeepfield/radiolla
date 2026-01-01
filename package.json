@@ -8,11 +8,9 @@
     "web": "expo start --web",
     "android": "expo run:android",
     "ios": "expo run:ios",
-
     "electron": "concurrently \"cross-env EXPO_NO_WEB_BROWSER=1 expo start --web\" \"node electron/run-electron.js\"",
     "electron:build": "npm run web:export && electron-builder --win --publish never",
     "web:export": "expo export --platform web --output-dir dist",
-
     "android:dev": "npm run android:prebuild && npm run android:build:debug && npm run android:install && npm run android:launch",
     "android:release": "npm run android:clean && npm run android:prebuild && npm run android:build:release && npm run android:install:release && npm run android:launch",
     "android:prebuild": "expo prebuild --platform android --clean",
@@ -24,27 +22,34 @@
     "android:clean": "cd android && .\\gradlew.bat clean",
     "android:logcat": "adb logcat -s ReactNativeJS:V ReactNative:V",
     "android:uninstall": "adb uninstall com.anonymous.radiolla",
-
     "typecheck": "tsc --noEmit",
     "lint": "eslint . --ext .ts,.tsx",
     "lint:fix": "eslint . --ext .ts,.tsx --fix",
     "format": "prettier --write \"**/*.{ts,tsx,js,jsx,json,md}\"",
     "format:check": "prettier --check \"**/*.{ts,tsx,js,jsx,json,md}\"",
     "check": "npm run typecheck && npm run lint",
-
     "clean": "rimraf dist build release android/app/build",
     "prepare": "husky",
     "postinstall": "node patch-rntp.js",
-    "generate:icon": "png-to-ico assets/icon.png > assets/icon.ico"
+    "generate:icon": "png-to-ico assets/icon.png > assets/icon.ico",
+    "test": "vitest --run",
+    "test:watch": "vitest"
   },
   "dependencies": {
     "@expo-google-fonts/roboto-condensed": "^0.4.2",
     "@react-native-async-storage/async-storage": "2.2.0",
+    "@react-native-community/netinfo": "^11.4.1",
+    "@react-native-firebase/app": "^23.7.0",
+    "@react-native-firebase/auth": "^23.7.0",
+    "@react-native-firebase/firestore": "^23.7.0",
+    "@react-native-google-signin/google-signin": "^16.1.1",
     "expo": "~54.0.30",
     "expo-audio": "~1.1.1",
+    "expo-auth-session": "^7.0.10",
     "expo-av": "~16.0.7",
     "expo-build-properties": "^1.0.10",
     "expo-clipboard": "~8.0.8",
+    "expo-crypto": "^15.0.8",
     "expo-document-picker": "~14.0.8",
     "expo-file-system": "~19.0.19",
     "expo-font": "^14.0.9",
@@ -72,11 +77,13 @@
     "eslint-plugin-prettier": "^5.5.4",
     "eslint-plugin-react": "^7.35.0",
     "eslint-plugin-react-native": "^4.1.0",
+    "fast-check": "^4.5.3",
     "husky": "^9.1.7",
     "lint-staged": "^16.2.7",
     "png-to-ico": "^3.0.1",
     "prettier": "^3.7.4",
     "typescript": "~5.9.2",
+    "vitest": "^4.0.16",
     "wait-on": "^9.0.3"
   },
   "build": {

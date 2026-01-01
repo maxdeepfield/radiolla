@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { StatusBar } from 'expo-status-bar';
 import {
   useFonts,
@@ -6,7 +6,13 @@ import {
   RobotoCondensed_500Medium,
   RobotoCondensed_700Bold,
 } from '@expo-google-fonts/roboto-condensed';
-import { KeyboardAvoidingView, Platform, ScrollView, View, Image } from 'react-native';
+import {
+  KeyboardAvoidingView,
+  Platform,
+  ScrollView,
+  View,
+  Image,
+} from 'react-native';
 
 import { SettingsProvider, useSettings } from './context/SettingsContext';
 import { StationsProvider, useStations } from './context/StationsContext';
@@ -26,6 +32,10 @@ import {
   SettingsModal,
 } from './components';
 
+// Import auth and sync services
+import authService, { User } from '../services/authService';
+import syncService from '../services/syncService';
+
 function AppContent() {
   const { styles, statusBarStyle } = useSettings();
   const {
@@ -35,6 +45,8 @@ function AppContent() {
     removeStation,
     reorderStations,
     clearStations,
+    setStationsFromSync,
+    isLoaded,
   } = useStations();
   const {
     currentStation,
@@ -63,11 +75,108 @@ function AppContent() {
   const [draggedStationId, setDraggedStationId] = useState<string | null>(null);
   const [draggedOverIndex, setDraggedOverIndex] = useState<number | null>(null);
 
+  // Auth state
+  const [currentUser, setCurrentUser] = useState<User | null>(null);
+
   const filteredStations = useMemo(() => {
     if (!filterText.trim()) return stations;
     const lower = filterText.toLowerCase();
     return stations.filter(s => s.name.toLowerCase().includes(lower));
   }, [stations, filterText]);
+
+  /**
+   * Perform sync with cloud storage.
+   * Called on sign-in and when network is restored.
+   * @requirements 2.1, 2.2, 2.3, 2.4 - Initial Sync on Sign-In
+   */
+  const performSync = useCallback(
+    async (userId: string) => {
+      if (!isLoaded) return;
+
+      const result = await syncService.syncStations(stations, userId);
+
+      if (result.success && result.mergedStations) {
+        // Update local stations with merged result
+        await setStationsFromSync(result.mergedStations);
+      }
+    },
+    [stations, isLoaded, setStationsFromSync]
+  );
+
+  /**
+   * Handle user sign-in.
+   * Triggers initial sync with cloud storage.
+   * @requirements 1.1, 1.2, 2.1, 2.2, 2.3, 2.4 - Google Authentication and Initial Sync
+   */
+  const handleSignIn = useCallback(
+    async (user: User) => {
+      setCurrentUser(user);
+
+      // Start network listener for offline support
+      syncService.startNetworkListener(user.uid, performSync);
+
+      // Trigger initial sync
+      await performSync(user.uid);
+    },
+    [performSync]
+  );
+
+  /**
+   * Handle user sign-out.
+   * Stops network listener and clears sync state.
+   * @requirements 1.4 - Sign out and clear credentials
+   */
+  const handleSignOut = useCallback(() => {
+    setCurrentUser(null);
+
+    // Stop network listener
+    syncService.stopNetworkListener();
+
+    // Reset sync state to idle
+    syncService.setSyncState('idle');
+  }, []);
+
+  /**
+   * Handle sync retry.
+   * Called when user clicks retry button after sync failure.
+   */
+  const handleSyncRetry = useCallback(async () => {
+    if (currentUser) {
+      await performSync(currentUser.uid);
+    }
+  }, [currentUser, performSync]);
+
+  // Initialize auth service and subscribe to auth state changes
+  // @requirements 1.1, 1.2 - AuthService initialization on app start
+  useEffect(() => {
+    const unsubscribe = authService.onAuthStateChanged(user => {
+      if (user && !currentUser) {
+        // User just signed in (or was already signed in on app start)
+        handleSignIn(user);
+      } else if (!user && currentUser) {
+        // User just signed out
+        handleSignOut();
+      } else if (user) {
+        // User state updated but still signed in
+        setCurrentUser(user);
+      }
+    });
+
+    return () => {
+      unsubscribe();
+      // Clean up network listener on unmount
+      syncService.stopNetworkListener();
+    };
+  }, []); // Empty deps - only run on mount
+
+  // Trigger sync when stations are loaded and user is signed in
+  // @requirements 2.1, 2.2, 2.3, 2.4 - Initial Sync on Sign-In
+  useEffect(() => {
+    if (isLoaded && currentUser) {
+      // Sync when stations finish loading (for app restart with existing user)
+      performSync(currentUser.uid);
+    }
+  }, [isLoaded]); // Only trigger when isLoaded changes
 
   // Global error handler
   useEffect(() => {
@@ -252,10 +361,7 @@ function AppContent() {
 
       <View style={styles.webWrapper}>
         <View style={styles.appFrame}>
-          <Header
-            onMenuPress={toggleMenu}
-            onSearchPress={handleSearchToggle}
-          />
+          <Header onMenuPress={toggleMenu} onSearchPress={handleSearchToggle} />
 
           {showSearch && (
             <SearchBar
@@ -272,6 +378,7 @@ function AppContent() {
             onImportExport={openImportModal}
             onSettings={openSettingsModal}
             onAbout={openAbout}
+            onSyncRetry={handleSyncRetry}
           />
 
           <KeyboardAvoidingView
@@ -352,6 +459,9 @@ function AppContent() {
       <SettingsModal
         visible={showSettingsModal}
         onClose={() => setShowSettingsModal(false)}
+        onSignIn={handleSignIn}
+        onSignOut={handleSignOut}
+        onSyncRetry={handleSyncRetry}
       />
     </View>
   );
