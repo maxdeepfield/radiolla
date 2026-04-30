@@ -1,16 +1,10 @@
 import React from 'react';
 import { Modal, View, Text, TouchableOpacity, Pressable } from 'react-native';
 import { useSettings } from '../../context/SettingsContext';
-import { GoogleAuthButton } from '../GoogleAuthButton';
-import { SyncStatusIndicator } from '../SyncStatusIndicator';
-import { User } from '../../../services/authService';
 
 type SettingsModalProps = {
   visible: boolean;
   onClose: () => void;
-  onSignIn?: (user: User) => void;
-  onSignOut?: () => void;
-  onSyncRetry?: () => void;
 };
 
 function Checkbox({
@@ -32,20 +26,13 @@ function Checkbox({
   );
 }
 
-export function SettingsModal({
-  visible,
-  onClose,
-  onSignIn,
-  onSignOut,
-  onSyncRetry,
-}: SettingsModalProps) {
+export function SettingsModal({ visible, onClose }: SettingsModalProps) {
   const { styles, themePref, setThemePref, compactUI, setCompactUI } =
     useSettings();
 
   const isDarkMode = themePref === 'dark';
 
   const handleDarkModeToggle = () => {
-    // Toggle between dark and light (not auto)
     setThemePref(isDarkMode ? 'light' : 'dark');
   };
 
@@ -69,19 +56,9 @@ export function SettingsModal({
             <Checkbox checked={isDarkMode} onPress={handleDarkModeToggle} />
           </View>
 
-          <View style={styles.settingsRow}>
+          <View style={[styles.settingsRow, { borderBottomWidth: 0 }]}>
             <Text style={styles.settingsLabel}>Compact UI</Text>
             <Checkbox checked={compactUI} onPress={handleCompactUIToggle} />
-          </View>
-
-          {/* Google Sync Section */}
-          <View style={styles.settingsSectionHeader}>
-            <Text style={styles.settingsSectionTitle}>Cloud Sync</Text>
-            <SyncStatusIndicator onRetry={onSyncRetry} />
-          </View>
-
-          <View style={[styles.settingsRow, { borderBottomWidth: 0 }]}>
-            <GoogleAuthButton onSignIn={onSignIn} onSignOut={onSignOut} />
           </View>
 
           <View style={styles.modalActions}>

@@ -7,7 +7,6 @@ import {
   Pressable,
 } from 'react-native';
 import { useSettings } from '../context/SettingsContext';
-import { SyncStatusIndicator } from './SyncStatusIndicator';
 
 type PressableState = {
   hovered?: boolean;
@@ -21,7 +20,6 @@ type MenuProps = {
   onImportExport: () => void;
   onSettings: () => void;
   onAbout: () => void;
-  onSyncRetry?: () => void;
 };
 
 export function Menu({
@@ -31,7 +29,6 @@ export function Menu({
   onImportExport,
   onSettings,
   onAbout,
-  onSyncRetry,
 }: MenuProps) {
   const { styles } = useSettings();
 
@@ -50,11 +47,6 @@ export function Menu({
           showsVerticalScrollIndicator={false}
           bounces={false}
         >
-          {/* Sync Status at the top of menu */}
-          <View style={styles.menuSection}>
-            <SyncStatusIndicator onRetry={onSyncRetry} />
-          </View>
-          <View style={styles.menuDivider} />
           <Pressable
             style={({ hovered, pressed }: PressableState) => [
               styles.menuItem,

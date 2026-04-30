@@ -20,6 +20,8 @@ node_modules/
 web-build/
 dist/
 release/
+installer/
+build/
 expo-env.d.ts
 
 # Native / React Native build artifacts
@@ -48,6 +50,7 @@ electron/dist/
 .history/
 .kiro/
 .zencoder/
+.husky/
 *.suo
 *.ntvs*
 *.njsproj

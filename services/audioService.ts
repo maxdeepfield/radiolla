@@ -58,10 +58,17 @@ class ExpoAudioService implements AudioService {
   async play(url: string, _stationName: string): Promise<void> {
     try {
       const player = this.ensurePlayer(url);
-      await player.play();
+      player.play();
     } catch (error) {
-      console.error('ExpoAudioService play failed:', error);
-      throw error;
+      // Ignore "play interrupted by pause" - this is normal when fast-clicking
+      const isInterruptedError =
+        error instanceof DOMException &&
+        (error.name === 'AbortError' || error.message.includes('interrupted'));
+
+      if (!isInterruptedError) {
+        console.error('ExpoAudioService play failed:', error);
+        throw error;
+      }
     }
   }
 

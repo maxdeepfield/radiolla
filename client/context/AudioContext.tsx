@@ -85,6 +85,10 @@ export function AudioProvider({
   const primaryControlRef = useRef<() => void>(() => {});
   const trayPlayRef = useRef<() => void>(() => {});
 
+  // Track current play operation to prevent race conditions
+  const playOperationIdRef = useRef<number>(0);
+  const isPlayingRef = useRef<boolean>(false);
+
   // Fetch ICY metadata from stream
   const fetchStreamMetadata = async (streamUrl: string) => {
     try {
@@ -178,6 +182,7 @@ export function AudioProvider({
 
   const stopPlayback = async () => {
     stopMetadataPolling();
+    isPlayingRef.current = false;
     const audioService = audioServiceRef.current;
     try {
       if (audioService) {
@@ -197,31 +202,72 @@ export function AudioProvider({
   stopPlaybackRef.current = stopPlayback;
 
   const playStation = async (station: Station) => {
+    // Increment operation ID to invalidate any pending play operations
+    const operationId = ++playOperationIdRef.current;
+
     setStreamError(null);
     setPlaybackState('loading');
     setNowPlayingTrack(null);
     setLastStation(station);
     setCurrentStation(station);
+
     try {
       const audioService = audioServiceRef.current;
       if (!audioService) {
         throw new Error('Audio service not initialized');
       }
-      await audioService.stop();
+
+      // Stop any current playback first
+      if (isPlayingRef.current) {
+        isPlayingRef.current = false;
+        await audioService.stop();
+      }
+
+      // Check if this operation was superseded by a newer one
+      if (operationId !== playOperationIdRef.current) {
+        return; // Another station was selected, abort this operation
+      }
+
       if (Platform.OS !== 'web') {
         await audioService.setActiveForLockScreen(true, {
           title: station.name,
           artist: 'Radiolla',
         });
       }
+
+      // Check again before the actual play call
+      if (operationId !== playOperationIdRef.current) {
+        return;
+      }
+
+      isPlayingRef.current = true;
       await audioService.play(station.url, station.name);
+
+      // Verify this is still the current operation before updating state
+      if (operationId !== playOperationIdRef.current) {
+        // This play succeeded but was superseded, stop it
+        await audioService.stop();
+        return;
+      }
+
       setPlaybackState('playing');
       startMetadataPolling(station.url);
-    } catch (_err) {
-      setPlaybackState('idle');
-      setCurrentStation(null);
-      stopMetadataPolling();
-      setStreamError('Unable to play the stream. Check the URL and try again.');
+    } catch (err) {
+      // Ignore "play interrupted by pause" errors - this is normal when fast-clicking
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      const isInterruptedError =
+        errorMessage.includes('interrupted') ||
+        errorMessage.includes('AbortError') ||
+        (err instanceof DOMException && err.name === 'AbortError');
+
+      // Only update error state if this is still the current operation and not an interrupt
+      if (operationId === playOperationIdRef.current && !isInterruptedError) {
+        isPlayingRef.current = false;
+        setPlaybackState('idle');
+        setCurrentStation(null);
+        stopMetadataPolling();
+        setStreamError('Unable to play the stream. Check the URL and try again.');
+      }
     }
   };
 
