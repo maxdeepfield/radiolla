@@ -58,11 +58,12 @@ export function deserialize(json: string): DeserializeResult {
       }
     }
 
-    // Return validated stations (only keeping the required fields)
+    // Return validated stations (keeping required fields + optional favorite)
     return parsed.map((s: Record<string, unknown>) => ({
       id: s.id as string,
       name: s.name as string,
       url: s.url as string,
+      favorite: typeof s.favorite === 'boolean' ? s.favorite : false,
     }));
   } catch {
     return { error: 'Invalid JSON: failed to parse' };

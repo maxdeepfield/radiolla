@@ -13,6 +13,10 @@ import {
   View,
   Image,
 } from 'react-native';
+import {
+  SafeAreaProvider,
+  useSafeAreaInsets,
+} from 'react-native-safe-area-context';
 
 import { SettingsProvider, useSettings } from './context/SettingsContext';
 import { StationsProvider, useStations } from './context/StationsContext';
@@ -34,6 +38,9 @@ import {
 
 function AppContent() {
   const { styles, statusBarStyle } = useSettings();
+  const safeAreaInsets = useSafeAreaInsets();
+  const topInset = Platform.OS === 'web' ? 0 : safeAreaInsets.top;
+  const bottomInset = Platform.OS === 'web' ? 0 : safeAreaInsets.bottom;
   const {
     stations,
     addStation,
@@ -41,18 +48,16 @@ function AppContent() {
     removeStation,
     reorderStations,
     clearStations,
+    toggleFavorite,
   } = useStations();
-  const {
-    currentStation,
-    playbackState,
-    playStation,
-    stopPlayback,
-  } = useAudio();
+  const { currentStation, playbackState, playStation, stopPlayback } =
+    useAudio();
 
   // UI State
   const [menuOpen, setMenuOpen] = useState(false);
   const [showSearch, setShowSearch] = useState(false);
   const [filterText, setFilterText] = useState('');
+  const [showFavoritesOnly, setShowFavoritesOnly] = useState(false);
   const [showVolumeSlider, setShowVolumeSlider] = useState(false);
   const [contextStationId, setContextStationId] = useState<string | null>(null);
 
@@ -69,19 +74,36 @@ function AppContent() {
   const [draggedOverIndex, setDraggedOverIndex] = useState<number | null>(null);
 
   const filteredStations = useMemo(() => {
-    if (!filterText.trim()) return stations;
-    const lower = filterText.toLowerCase();
-    return stations.filter(s => s.name.toLowerCase().includes(lower));
-  }, [stations, filterText]);
+    let result = stations;
+
+    // Filter by favorites
+    if (showFavoritesOnly) {
+      result = result.filter(s => s.favorite);
+    }
+
+    // Filter by text (search both name and URL)
+    if (filterText.trim()) {
+      const lower = filterText.toLowerCase();
+      result = result.filter(
+        s =>
+          s.name.toLowerCase().includes(lower) ||
+          s.url.toLowerCase().includes(lower)
+      );
+    }
+
+    return result;
+  }, [stations, filterText, showFavoritesOnly]);
 
   // Global error handler
   useEffect(() => {
     // Helper to check if error should be ignored (play interrupted by pause)
     const shouldIgnoreError = (message: string | undefined): boolean => {
       if (!message) return false;
-      return message.includes('interrupted') ||
-             message.includes('AbortError') ||
-             message.includes('pause()');
+      return (
+        message.includes('interrupted') ||
+        message.includes('AbortError') ||
+        message.includes('pause()')
+      );
     };
 
     try {
@@ -177,11 +199,15 @@ function AppContent() {
   // Search handlers
   const handleSearchToggle = () => {
     setShowSearch(prev => !prev);
-    if (showSearch) setFilterText('');
+    if (showSearch) {
+      setFilterText('');
+      setShowFavoritesOnly(false);
+    }
   };
 
   const handleSearchClose = () => {
     setFilterText('');
+    setShowFavoritesOnly(false);
     setShowSearch(false);
   };
 
@@ -218,6 +244,10 @@ function AppContent() {
     await removeStation(id);
     if (currentStation?.id === id) await stopPlayback();
     setContextStationId(null);
+  };
+
+  const handleToggleFavorite = async (id: string) => {
+    await toggleFavorite(id);
   };
 
   // Modal handlers
@@ -261,6 +291,7 @@ function AppContent() {
   const handleClearStations = async () => {
     await stopPlayback();
     setFilterText('');
+    setShowFavoritesOnly(false);
     await clearStations();
   };
 
@@ -270,13 +301,19 @@ function AppContent() {
 
       <View style={styles.webWrapper}>
         <View style={styles.appFrame}>
-          <Header onMenuPress={toggleMenu} onSearchPress={handleSearchToggle} />
+          <Header
+            onMenuPress={toggleMenu}
+            onSearchPress={handleSearchToggle}
+            topInset={topInset}
+          />
 
           {showSearch && (
             <SearchBar
               value={filterText}
               onChangeText={setFilterText}
               onClose={handleSearchClose}
+              showFavoritesOnly={showFavoritesOnly}
+              onToggleFavorites={() => setShowFavoritesOnly(prev => !prev)}
             />
           )}
 
@@ -295,6 +332,10 @@ function AppContent() {
           >
             <ScrollView
               style={styles.list}
+              contentContainerStyle={[
+                styles.listContent,
+                { paddingBottom: bottomInset + 16 },
+              ]}
               showsVerticalScrollIndicator={false}
               scrollEnabled={!draggedStationId}
             >
@@ -324,6 +365,7 @@ function AppContent() {
                     onEdit={() => openEditModal(station)}
                     onRemove={() => handleRemoveStation(station.id)}
                     onCloseMenu={() => setContextStationId(null)}
+                    onToggleFavorite={() => handleToggleFavorite(station.id)}
                   />
                 );
               })}
@@ -333,6 +375,7 @@ function AppContent() {
           <PlayerBar
             showVolumeSlider={showVolumeSlider}
             onVolumeToggle={() => setShowVolumeSlider(prev => !prev)}
+            bottomInset={bottomInset}
           />
         </View>
       </View>
@@ -409,10 +452,12 @@ export default function App() {
   }
 
   return (
-    <SettingsProvider>
-      <StationsProvider>
-        <AppWithAudio />
-      </StationsProvider>
-    </SettingsProvider>
+    <SafeAreaProvider>
+      <SettingsProvider>
+        <StationsProvider>
+          <AppWithAudio />
+        </StationsProvider>
+      </SettingsProvider>
+    </SafeAreaProvider>
   );
 }

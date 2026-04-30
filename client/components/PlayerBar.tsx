@@ -3,16 +3,17 @@ import { View, Text, TouchableOpacity } from 'react-native';
 import { useSettings } from '../context/SettingsContext';
 import { useAudio } from '../context/AudioContext';
 import { VolumeSlider } from './VolumeSlider';
-import { INSETS } from '../styles/theme';
 
 type PlayerBarProps = {
   showVolumeSlider: boolean;
   onVolumeToggle: () => void;
+  bottomInset: number;
 };
 
 export function PlayerBar({
   showVolumeSlider,
   onVolumeToggle,
+  bottomInset,
 }: PlayerBarProps) {
   const { styles } = useSettings();
   const {
@@ -41,7 +42,7 @@ export function PlayerBar({
     playbackState === 'playing' || playbackState === 'loading' ? '■' : '▶';
 
   return (
-    <View style={[styles.bottomBar, { paddingBottom: INSETS.bottom + 8 }]}>
+    <View style={[styles.bottomBar, { paddingBottom: bottomInset + 8 }]}>
       <View style={styles.nowPlayingInfo}>
         <Text
           style={styles.nowPlayingTitle}

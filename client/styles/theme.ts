@@ -1,5 +1,3 @@
-import { Platform } from 'react-native';
-
 export type ThemePref = 'auto' | 'light' | 'dark';
 
 export type Palette = {
@@ -59,8 +57,3 @@ export const THEME_OPTIONS: { key: ThemePref; label: string }[] = [
   { key: 'light', label: 'Light' },
   { key: 'dark', label: 'Dark' },
 ];
-
-export const INSETS = {
-  top: Platform.OS === 'android' ? 24 : 0,
-  bottom: Platform.OS === 'android' ? 24 : 0,
-};

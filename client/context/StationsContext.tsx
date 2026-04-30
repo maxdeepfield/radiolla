@@ -11,6 +11,7 @@ export type Station = {
   id: string;
   name: string;
   url: string;
+  favorite?: boolean;
 };
 
 const STORAGE_KEY = 'Radiolla:stations';
@@ -23,6 +24,7 @@ type StationsContextType = {
   reorderStations: (fromIndex: number, toIndex: number) => Promise<void>;
   clearStations: () => Promise<void>;
   importStations: (newStations: Station[]) => Promise<void>;
+  toggleFavorite: (id: string) => Promise<void>;
   isLoaded: boolean;
 };
 
@@ -62,6 +64,7 @@ export function StationsProvider({ children }: { children: ReactNode }) {
       id: Date.now().toString(),
       name: name.trim(),
       url: url.trim(),
+      favorite: false,
     };
     const next = [...stations, newStation];
     await persistStations(next);
@@ -95,6 +98,13 @@ export function StationsProvider({ children }: { children: ReactNode }) {
     await persistStations(updated);
   };
 
+  const toggleFavorite = async (id: string) => {
+    const next = stations.map(s =>
+      s.id === id ? { ...s, favorite: !s.favorite } : s
+    );
+    await persistStations(next);
+  };
+
   const value: StationsContextType = {
     stations,
     addStation,
@@ -103,6 +113,7 @@ export function StationsProvider({ children }: { children: ReactNode }) {
     reorderStations,
     clearStations,
     importStations,
+    toggleFavorite,
     isLoaded,
   };
 

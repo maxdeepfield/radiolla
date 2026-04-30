@@ -1,18 +1,18 @@
 import React from 'react';
 import { View, Text, TouchableOpacity } from 'react-native';
 import { useSettings } from '../context/SettingsContext';
-import { INSETS } from '../styles/theme';
 
 type HeaderProps = {
   onMenuPress: () => void;
   onSearchPress: () => void;
+  topInset: number;
 };
 
-export function Header({ onMenuPress, onSearchPress }: HeaderProps) {
+export function Header({ onMenuPress, onSearchPress, topInset }: HeaderProps) {
   const { styles } = useSettings();
 
   return (
-    <View style={[styles.topBar, { paddingTop: INSETS.top + 6 }]}>
+    <View style={[styles.topBar, { paddingTop: topInset + 6 }]}>
       <View>
         <Text style={styles.heading}>Radiolla</Text>
         <Text style={styles.headingBadge}>Absolute Freakout</Text>

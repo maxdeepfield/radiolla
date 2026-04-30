@@ -165,6 +165,10 @@ export function AudioProvider({
     if (metadataIntervalRef.current) {
       clearInterval(metadataIntervalRef.current);
     }
+    if (Platform.OS !== 'web') {
+      metadataIntervalRef.current = null;
+      return;
+    }
     getStreamMetadata(streamUrl).then(setNowPlayingTrack);
     metadataIntervalRef.current = setInterval(async () => {
       const track = await getStreamMetadata(streamUrl);
@@ -228,13 +232,6 @@ export function AudioProvider({
         return; // Another station was selected, abort this operation
       }
 
-      if (Platform.OS !== 'web') {
-        await audioService.setActiveForLockScreen(true, {
-          title: station.name,
-          artist: 'Radiolla',
-        });
-      }
-
       // Check again before the actual play call
       if (operationId !== playOperationIdRef.current) {
         return;
@@ -266,7 +263,9 @@ export function AudioProvider({
         setPlaybackState('idle');
         setCurrentStation(null);
         stopMetadataPolling();
-        setStreamError('Unable to play the stream. Check the URL and try again.');
+        setStreamError(
+          'Unable to play the stream. Check the URL and try again.'
+        );
       }
     }
   };
@@ -342,6 +341,11 @@ export function AudioProvider({
               if (currentIndex > 0) {
                 const prevStation = stations[currentIndex - 1];
                 if (prevStation) playStationRef.current(prevStation);
+              }
+            },
+            onMetadata: title => {
+              if (isPlayingRef.current) {
+                setNowPlayingTrack(title);
               }
             },
           });

@@ -2,7 +2,7 @@
  * Build Electron app for distribution
  * Reads all config from package.json
  */
-const { execSync } = require('child_process');
+const { execSync, spawnSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 
@@ -19,7 +19,7 @@ console.log(`Building ${appName}...`);
 
 // Step 1: Export web build
 console.log('\n📦 Exporting web build...');
-execSync('npx expo export --platform web --output-dir dist', { stdio: 'inherit' });
+execSync('npx -y expo export --platform web --output-dir dist', { stdio: 'inherit' });
 
 // Step 2: Fix absolute paths in index.html for Electron file:// protocol
 const indexPath = path.join(__dirname, '..', 'dist', 'index.html');
@@ -38,28 +38,40 @@ console.log('✓ Updated main to electron/main.js');
 
 try {
   // Step 4: Package with electron-packager
-  console.log('\n🔨 Packaging Electron app...');
-  const packagerCmd = [
-    'npx @electron/packager .',
-    `"${appName}"`,
+  console.log('\n🔨 Packaging Electron app... (this may take 1-3 minutes)');
+  const startTime = Date.now();
+
+  const args = [
+    '-y', '@electron/packager', '.',
+    appName,
     '--platform=win32',
     '--arch=x64',
     '--out=build',
     '--overwrite',
     `--icon=${icon}`,
-    '--ignore="^/build"',
-    '--ignore="^/release"',
-    '--ignore="^/installer"',
-    '--ignore="^/android"',
-    '--ignore="^/ios"',
-    '--ignore="^/\\.git"',
-    '--ignore="^/\\.expo"',
-    '--ignore="^/\\.history"',
-    '--ignore="^/node_modules/\\.cache"',
-  ].join(' ');
+    '--ignore=^/build',
+    '--ignore=^/release',
+    '--ignore=^/installer',
+    '--ignore=^/android',
+    '--ignore=^/ios',
+    '--ignore=^/\\.git',
+    '--ignore=^/\\.expo',
+    '--ignore=^/\\.history',
+    '--ignore=^/node_modules/\\.cache',
+  ];
 
-  execSync(packagerCmd, { stdio: 'inherit' });
-  console.log(`\n✅ Build complete! Output: build/${appName}-win32-x64`);
+  const result = spawnSync('npx', args, {
+    stdio: 'inherit',
+    shell: true,
+    cwd: path.join(__dirname, '..'),
+  });
+
+  if (result.status !== 0) {
+    throw new Error(`electron-packager exited with code ${result.status}`);
+  }
+
+  const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+  console.log(`\n✅ Build complete in ${elapsed}s! Output: build/${appName}-win32-x64`);
 } finally {
   // Restore original main
   pkg.main = originalMain;

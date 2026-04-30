@@ -28,6 +28,7 @@ type StationCardProps = {
   onEdit: () => void;
   onRemove: () => void;
   onCloseMenu: () => void;
+  onToggleFavorite: () => void;
 };
 
 export function StationCard({
@@ -43,6 +44,7 @@ export function StationCard({
   onEdit,
   onRemove,
   onCloseMenu,
+  onToggleFavorite,
 }: StationCardProps) {
   const { styles } = useSettings();
 
@@ -63,6 +65,23 @@ export function StationCard({
           ]}
         >
           <View style={styles.cardMain}>
+            <Pressable
+              onPress={onToggleFavorite}
+              hitSlop={4}
+              style={({ hovered, pressed }: PressableState) => [
+                styles.favoriteButton,
+                (hovered || pressed) && styles.favoriteButtonActive,
+              ]}
+            >
+              <Text
+                style={[
+                  styles.favoriteIcon,
+                  station.favorite && styles.favoriteIconActive,
+                ]}
+              >
+                {station.favorite ? '★' : '☆'}
+              </Text>
+            </Pressable>
             <View style={styles.cardText}>
               <Text style={styles.cardTitle} numberOfLines={1}>
                 {station.name}
@@ -85,6 +104,18 @@ export function StationCard({
           </View>
           {showActions && (
             <View style={styles.cardMenuSheet}>
+              <Pressable
+                style={({ hovered, pressed }: PressableState) => [
+                  styles.cardMenuItem,
+                  (hovered || pressed) && styles.cardMenuItemActive,
+                ]}
+                onPress={onToggleFavorite}
+              >
+                <Text style={styles.cardMenuLabel}>
+                  {station.favorite ? '★ Unfavorite' : '☆ Favorite'}
+                </Text>
+              </Pressable>
+              <View style={styles.menuDivider} />
               <Pressable
                 style={({ hovered, pressed }: PressableState) => [
                   styles.cardMenuItem,

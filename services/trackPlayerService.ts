@@ -9,15 +9,31 @@ import TrackPlayer, {
 } from 'react-native-track-player';
 import { Platform } from 'react-native';
 
+type AudioCommonMetadata = {
+  title?: string;
+  description?: string;
+  subtitle?: string;
+};
+
+type AudioMetadata = AudioCommonMetadata & {
+  raw?: {
+    commonKey?: string;
+    key?: string;
+    value?: unknown;
+  }[];
+};
+
 export type TrackPlayerServiceCallbacks = {
   onPlay?: () => void;
   onPause?: () => void;
   onStop?: () => void;
   onNext?: () => void;
   onPrevious?: () => void;
+  onMetadata?: (title: string) => void;
 };
 
 let serviceCallbacks: TrackPlayerServiceCallbacks = {};
+let metadataListenersRegistered = false;
 
 export function setTrackPlayerCallbacks(
   callbacks: TrackPlayerServiceCallbacks
@@ -67,9 +83,100 @@ export async function PlaybackService() {
 
 let isSetup = false;
 
+function isNoCurrentItemError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.toLowerCase().includes('no current item');
+}
+
+function isAlreadyInitializedError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.toLowerCase().includes('already been initialized');
+}
+
+function cleanMetadataValue(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const cleaned = value.replace(/\0+$/, '').trim();
+  return cleaned.length > 0 ? cleaned : null;
+}
+
+function parseStreamTitle(value: string): string | null {
+  const match = value.match(/StreamTitle='([^']*)'/i);
+  return cleanMetadataValue(match ? match[1] : value);
+}
+
+function getCommonMetadataTitle(
+  metadata: AudioCommonMetadata | undefined
+): string | null {
+  if (!metadata) return null;
+  return (
+    cleanMetadataValue(metadata.title) ||
+    cleanMetadataValue(metadata.description) ||
+    cleanMetadataValue(metadata.subtitle)
+  );
+}
+
+function getTimedMetadataTitle(metadata: AudioMetadata[]): string | null {
+  for (const item of metadata) {
+    const commonTitle = getCommonMetadataTitle(item);
+    if (commonTitle) return commonTitle;
+
+    for (const rawEntry of item.raw ?? []) {
+      const key =
+        `${rawEntry.commonKey ?? ''} ${rawEntry.key ?? ''}`.toLowerCase();
+      const value = cleanMetadataValue(rawEntry.value);
+      if (!value) continue;
+
+      if (key.includes('streamtitle')) {
+        return parseStreamTitle(value);
+      }
+      if (key.includes('title')) {
+        return cleanMetadataValue(value);
+      }
+    }
+  }
+
+  for (const item of metadata) {
+    for (const rawEntry of item.raw ?? []) {
+      const value = cleanMetadataValue(rawEntry.value);
+      if (value?.includes("StreamTitle='")) {
+        return parseStreamTitle(value);
+      }
+    }
+  }
+
+  return null;
+}
+
+function emitMetadataTitle(title: string | null) {
+  if (title) {
+    serviceCallbacks.onMetadata?.(title);
+  }
+}
+
+function registerMetadataListeners() {
+  if (metadataListenersRegistered) return;
+
+  TrackPlayer.addEventListener(Event.MetadataCommonReceived, event => {
+    emitMetadataTitle(getCommonMetadataTitle(event.metadata));
+  });
+
+  TrackPlayer.addEventListener(Event.MetadataTimedReceived, event => {
+    emitMetadataTitle(getTimedMetadataTitle(event.metadata));
+  });
+
+  TrackPlayer.addEventListener(Event.MetadataChapterReceived, event => {
+    emitMetadataTitle(getTimedMetadataTitle(event.metadata));
+  });
+
+  metadataListenersRegistered = true;
+}
+
 export async function setupTrackPlayer(): Promise<void> {
-  if (isSetup) return;
   if (Platform.OS === 'web') return; // Guard against Web execution
+  if (isSetup) {
+    registerMetadataListeners();
+    return;
+  }
 
   try {
     await TrackPlayer.setupPlayer({
@@ -97,8 +204,14 @@ export async function setupTrackPlayer(): Promise<void> {
     });
 
     await TrackPlayer.setRepeatMode(RepeatMode.Off);
+    registerMetadataListeners();
     isSetup = true;
   } catch (error) {
+    if (isAlreadyInitializedError(error)) {
+      registerMetadataListeners();
+      isSetup = true;
+      return;
+    }
     console.error('Failed to setup TrackPlayer:', error);
   }
 }
@@ -174,11 +287,15 @@ export async function updateTrackMetadata(
   if (Platform.OS === 'web') return; // Guard against Web execution
 
   try {
+    const activeTrackIndex = await TrackPlayer.getActiveTrackIndex();
+    if (activeTrackIndex === undefined) return;
+
     await TrackPlayer.updateNowPlayingMetadata({
       title,
       artist,
     });
   } catch (error) {
+    if (isNoCurrentItemError(error)) return;
     console.error('TrackPlayer updateMetadata failed:', error);
   }
 }

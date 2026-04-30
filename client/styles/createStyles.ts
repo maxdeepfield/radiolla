@@ -188,6 +188,47 @@ export const createStyles = (palette: Palette, compactUI: boolean = false) => {
       marginBottom: 4,
       paddingTop: 2,
     },
+    favoriteButton: {
+      alignItems: 'center',
+      justifyContent: 'center',
+      width: compactUI ? 24 : 28,
+      height: compactUI ? 24 : 28,
+      borderRadius: 14,
+    },
+    favoriteButtonActive: {
+      backgroundColor: palette.accentSoft,
+    },
+    favoriteIcon: {
+      color: palette.textSecondary,
+      fontSize: compactUI ? 16 : 18,
+    },
+    favoriteIconActive: {
+      color: palette.accentStrong,
+    },
+    favFilterButton: {
+      alignItems: 'center',
+      backgroundColor: palette.neutral,
+      borderColor: palette.border,
+      borderRadius: 4,
+      borderWidth: 1,
+      justifyContent: 'center',
+      paddingHorizontal: 10,
+    },
+    favFilterButtonActive: {
+      backgroundColor: palette.accentSoft,
+      borderColor: palette.accentStrong,
+    },
+    favFilterButtonHover: {
+      backgroundColor: palette.accentSoft,
+    },
+    favFilterIcon: {
+      color: palette.textSecondary,
+      fontFamily: fonts.bold,
+      fontSize: 14,
+    },
+    favFilterIconActive: {
+      color: palette.accentStrong,
+    },
     heading: {
       color: palette.textPrimary,
       fontFamily: fonts.bold,
@@ -265,8 +306,10 @@ export const createStyles = (palette: Palette, compactUI: boolean = false) => {
       borderColor: palette.accentStrong,
     },
     list: {
-      paddingBottom: 92,
       paddingTop: 2,
+    },
+    listContent: {
+      paddingBottom: 16,
     },
     menuBackdrop: {
       ...StyleSheet.absoluteFillObject,

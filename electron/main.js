@@ -9,7 +9,7 @@ const gotTheLock = app.requestSingleInstanceLock();
 
 if (!gotTheLock) {
   app.quit();
-  return; // Stop execution if we don't have the lock
+  process.exit(); // Stop execution if we don't have the lock
 } else {
   app.on('second-instance', (event, commandLine, workingDirectory) => {
     // Someone tried to run a second instance, we should focus our window.
