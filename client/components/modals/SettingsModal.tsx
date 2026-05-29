@@ -1,5 +1,12 @@
 import React from 'react';
-import { Modal, View, Text, TouchableOpacity, Pressable } from 'react-native';
+import {
+  Modal,
+  View,
+  Text,
+  TouchableOpacity,
+  Pressable,
+  Platform,
+} from 'react-native';
 import { useSettings } from '../../context/SettingsContext';
 
 type SettingsModalProps = {
@@ -27,8 +34,15 @@ function Checkbox({
 }
 
 export function SettingsModal({ visible, onClose }: SettingsModalProps) {
-  const { styles, themePref, setThemePref, compactUI, setCompactUI } =
-    useSettings();
+  const {
+    styles,
+    themePref,
+    setThemePref,
+    compactUI,
+    setCompactUI,
+    autoPlayOnBluetooth,
+    setAutoPlayOnBluetooth,
+  } = useSettings();
 
   const isDarkMode = themePref === 'dark';
 
@@ -39,6 +53,12 @@ export function SettingsModal({ visible, onClose }: SettingsModalProps) {
   const handleCompactUIToggle = () => {
     setCompactUI(!compactUI);
   };
+
+  const handleBluetoothAutoPlayToggle = () => {
+    setAutoPlayOnBluetooth(!autoPlayOnBluetooth);
+  };
+
+  const showBluetoothAutoPlay = Platform.OS === 'android';
 
   return (
     <Modal
@@ -56,10 +76,25 @@ export function SettingsModal({ visible, onClose }: SettingsModalProps) {
             <Checkbox checked={isDarkMode} onPress={handleDarkModeToggle} />
           </View>
 
-          <View style={[styles.settingsRow, { borderBottomWidth: 0 }]}>
+          <View
+            style={[
+              styles.settingsRow,
+              !showBluetoothAutoPlay && styles.settingsRowLast,
+            ]}
+          >
             <Text style={styles.settingsLabel}>Compact UI</Text>
             <Checkbox checked={compactUI} onPress={handleCompactUIToggle} />
           </View>
+
+          {showBluetoothAutoPlay && (
+            <View style={[styles.settingsRow, styles.settingsRowLast]}>
+              <Text style={styles.settingsLabel}>Auto-play on Bluetooth</Text>
+              <Checkbox
+                checked={autoPlayOnBluetooth}
+                onPress={handleBluetoothAutoPlayToggle}
+              />
+            </View>
+          )}
 
           <View style={styles.modalActions}>
             <TouchableOpacity

@@ -34,6 +34,8 @@ export function PlayerBar({
     statusLabel = 'Buffering...';
   } else if (playbackState === 'playing') {
     statusLabel = nowPlayingTrack || 'Streaming';
+  } else if (playbackState === 'suspended') {
+    statusLabel = 'Paused by other audio';
   } else if (activeStation) {
     statusLabel = streamError ? `Stopped · ${streamError}` : 'Stopped';
   }

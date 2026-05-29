@@ -15,9 +15,7 @@
     "ios": {
       "supportsTablet": true,
       "infoPlist": {
-        "UIBackgroundModes": [
-          "audio"
-        ]
+        "UIBackgroundModes": ["audio"]
       }
     },
     "android": {
@@ -30,6 +28,8 @@
       "usesCleartextTraffic": true,
       "package": "com.absolutefreakout.radiolla",
       "permissions": [
+        "android.permission.BLUETOOTH",
+        "android.permission.BLUETOOTH_CONNECT",
         "android.permission.FOREGROUND_SERVICE",
         "android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK",
         "android.permission.WAKE_LOCK"
@@ -39,6 +39,7 @@
       "favicon": "./assets/icon.png"
     },
     "plugins": [
+      "./plugins/withBluetoothAutoPlay",
       [
         "expo-audio",
         {

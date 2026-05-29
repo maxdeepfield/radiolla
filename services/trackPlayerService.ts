@@ -8,6 +8,7 @@ import TrackPlayer, {
   PlaybackState,
 } from 'react-native-track-player';
 import { Platform } from 'react-native';
+import { loadLastStation } from './playbackPreferences';
 
 type AudioCommonMetadata = {
   title?: string;
@@ -30,10 +31,13 @@ export type TrackPlayerServiceCallbacks = {
   onNext?: () => void;
   onPrevious?: () => void;
   onMetadata?: (title: string) => void;
+  onPlaybackState?: (state: State) => void;
+  onAudioFocusChange?: (event: RemoteDuckEvent) => void;
 };
 
 let serviceCallbacks: TrackPlayerServiceCallbacks = {};
 let metadataListenersRegistered = false;
+let playbackStateListenersRegistered = false;
 
 export function setTrackPlayerCallbacks(
   callbacks: TrackPlayerServiceCallbacks
@@ -41,11 +45,51 @@ export function setTrackPlayerCallbacks(
   serviceCallbacks = callbacks;
 }
 
+async function playActiveOrPersistedStation(): Promise<void> {
+  const activeTrackIndex = await TrackPlayer.getActiveTrackIndex().catch(
+    () => undefined
+  );
+
+  if (activeTrackIndex !== undefined) {
+    await TrackPlayer.play();
+    return;
+  }
+
+  const station = await loadLastStation();
+  if (!station) return;
+
+  await TrackPlayer.reset();
+  await TrackPlayer.add({
+    id: 'current-stream',
+    url: station.url,
+    title: station.name,
+    artist: 'Radiolla',
+    isLiveStream: true,
+  });
+  await TrackPlayer.play();
+}
+
+function emitPlaybackState(state: State) {
+  serviceCallbacks.onPlaybackState?.(state);
+}
+
+function emitAudioFocusChange(event: RemoteDuckEvent) {
+  serviceCallbacks.onAudioFocusChange?.(event);
+}
+
 // Playback service - handles remote events (notification controls, lock screen, etc.)
 export async function PlaybackService() {
+  registerPlaybackStateListeners();
+
   TrackPlayer.addEventListener(Event.RemotePlay, () => {
-    TrackPlayer.play();
-    serviceCallbacks.onPlay?.();
+    if (serviceCallbacks.onPlay) {
+      serviceCallbacks.onPlay();
+      return;
+    }
+
+    playActiveOrPersistedStation().catch(error => {
+      console.error('RemotePlay failed:', error);
+    });
   });
 
   TrackPlayer.addEventListener(Event.RemotePause, () => {
@@ -69,13 +113,14 @@ export async function PlaybackService() {
   TrackPlayer.addEventListener(
     Event.RemoteDuck,
     async (event: RemoteDuckEvent) => {
-      if (event.paused) {
-        await TrackPlayer.pause();
-      } else if (event.permanent) {
+      emitAudioFocusChange(event);
+
+      if (event.permanent) {
         await TrackPlayer.stop();
-      } else {
-        // Ducking behavior (lower volume)
-        await TrackPlayer.setVolume(0.5);
+        emitPlaybackState(State.Stopped);
+      } else if (event.paused) {
+        await TrackPlayer.pause();
+        emitPlaybackState(State.Paused);
       }
     }
   );
@@ -153,6 +198,20 @@ function emitMetadataTitle(title: string | null) {
   }
 }
 
+function registerPlaybackStateListeners() {
+  if (playbackStateListenersRegistered) return;
+
+  TrackPlayer.addEventListener(Event.PlaybackState, event => {
+    emitPlaybackState(event.state);
+  });
+
+  TrackPlayer.addEventListener(Event.PlaybackError, () => {
+    emitPlaybackState(State.Error);
+  });
+
+  playbackStateListenersRegistered = true;
+}
+
 function registerMetadataListeners() {
   if (metadataListenersRegistered) return;
 
@@ -175,6 +234,7 @@ export async function setupTrackPlayer(): Promise<void> {
   if (Platform.OS === 'web') return; // Guard against Web execution
   if (isSetup) {
     registerMetadataListeners();
+    registerPlaybackStateListeners();
     return;
   }
 
@@ -205,10 +265,12 @@ export async function setupTrackPlayer(): Promise<void> {
 
     await TrackPlayer.setRepeatMode(RepeatMode.Off);
     registerMetadataListeners();
+    registerPlaybackStateListeners();
     isSetup = true;
   } catch (error) {
     if (isAlreadyInitializedError(error)) {
       registerMetadataListeners();
+      registerPlaybackStateListeners();
       isSetup = true;
       return;
     }

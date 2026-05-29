@@ -188,23 +188,6 @@ export const createStyles = (palette: Palette, compactUI: boolean = false) => {
       marginBottom: 4,
       paddingTop: 2,
     },
-    favoriteButton: {
-      alignItems: 'center',
-      justifyContent: 'center',
-      width: compactUI ? 24 : 28,
-      height: compactUI ? 24 : 28,
-      borderRadius: 14,
-    },
-    favoriteButtonActive: {
-      backgroundColor: palette.accentSoft,
-    },
-    favoriteIcon: {
-      color: palette.textSecondary,
-      fontSize: compactUI ? 16 : 18,
-    },
-    favoriteIconActive: {
-      color: palette.accentStrong,
-    },
     favFilterButton: {
       alignItems: 'center',
       backgroundColor: palette.neutral,
@@ -227,6 +210,23 @@ export const createStyles = (palette: Palette, compactUI: boolean = false) => {
       fontSize: 14,
     },
     favFilterIconActive: {
+      color: palette.accentStrong,
+    },
+    favoriteButton: {
+      alignItems: 'center',
+      borderRadius: 14,
+      height: compactUI ? 24 : 28,
+      justifyContent: 'center',
+      width: compactUI ? 24 : 28,
+    },
+    favoriteButtonActive: {
+      backgroundColor: palette.accentSoft,
+    },
+    favoriteIcon: {
+      color: palette.textSecondary,
+      fontSize: compactUI ? 16 : 18,
+    },
+    favoriteIconActive: {
       color: palette.accentStrong,
     },
     heading: {
@@ -586,6 +586,9 @@ export const createStyles = (palette: Palette, compactUI: boolean = false) => {
       flexDirection: 'row',
       justifyContent: 'space-between',
       paddingVertical: 12,
+    },
+    settingsRowLast: {
+      borderBottomWidth: 0,
     },
     settingsSectionHeader: {
       alignItems: 'center',

@@ -6,19 +6,26 @@ import React, {
   useMemo,
   ReactNode,
 } from 'react';
-import { useColorScheme } from 'react-native';
+import { Platform, useColorScheme } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { ThemePref, Palette, palettes } from '../styles/theme';
 import { createStyles, AppStyles } from '../styles/createStyles';
+import {
+  loadAutoPlayOnBluetooth,
+  saveAutoPlayOnBluetooth,
+} from '../../services/playbackPreferences';
 
 const THEME_STORAGE_KEY = 'Radiolla:theme-pref';
 const COMPACT_UI_STORAGE_KEY = 'Radiolla:compact-ui';
+const DEFAULT_AUTO_PLAY_ON_BLUETOOTH = Platform.OS === 'android';
 
 type SettingsContextType = {
   themePref: ThemePref;
   setThemePref: (pref: ThemePref) => Promise<void>;
   compactUI: boolean;
   setCompactUI: (compact: boolean) => Promise<void>;
+  autoPlayOnBluetooth: boolean;
+  setAutoPlayOnBluetooth: (enabled: boolean) => Promise<void>;
   resolvedTheme: 'light' | 'dark';
   palette: Palette;
   styles: AppStyles;
@@ -31,16 +38,21 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
   const systemScheme = useColorScheme();
   const [themePref, setThemePrefState] = useState<ThemePref>('auto');
   const [compactUI, setCompactUIState] = useState(false);
+  const [autoPlayOnBluetooth, setAutoPlayOnBluetoothState] = useState(
+    DEFAULT_AUTO_PLAY_ON_BLUETOOTH
+  );
   const [isLoaded, setIsLoaded] = useState(false);
 
   // Load settings on mount
   useEffect(() => {
     const loadSettings = async () => {
       try {
-        const [storedTheme, storedCompact] = await Promise.all([
-          AsyncStorage.getItem(THEME_STORAGE_KEY),
-          AsyncStorage.getItem(COMPACT_UI_STORAGE_KEY),
-        ]);
+        const [storedTheme, storedCompact, storedAutoPlayOnBluetooth] =
+          await Promise.all([
+            AsyncStorage.getItem(THEME_STORAGE_KEY),
+            AsyncStorage.getItem(COMPACT_UI_STORAGE_KEY),
+            loadAutoPlayOnBluetooth(DEFAULT_AUTO_PLAY_ON_BLUETOOTH),
+          ]);
 
         if (
           storedTheme === 'auto' ||
@@ -52,6 +64,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
         if (storedCompact !== null) {
           setCompactUIState(storedCompact === 'true');
         }
+        setAutoPlayOnBluetoothState(storedAutoPlayOnBluetooth);
       } catch {
         // ignore load errors
       } finally {
@@ -79,6 +92,15 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     }
   };
 
+  const setAutoPlayOnBluetooth = async (enabled: boolean) => {
+    setAutoPlayOnBluetoothState(enabled);
+    try {
+      await saveAutoPlayOnBluetooth(enabled);
+    } catch {
+      // ignore persistence errors
+    }
+  };
+
   const resolvedTheme =
     themePref === 'auto'
       ? systemScheme === 'dark'
@@ -98,6 +120,8 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     setThemePref,
     compactUI,
     setCompactUI,
+    autoPlayOnBluetooth,
+    setAutoPlayOnBluetooth,
     resolvedTheme,
     palette,
     styles,

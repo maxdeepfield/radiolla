@@ -13,10 +13,22 @@ import {
   AudioService,
 } from '../../services/audioService';
 import {
+  addBluetoothAudioConnectedListener,
+  isBluetoothAutoPlayAvailable,
+  startBluetoothAutoPlayListener,
+} from '../../services/bluetoothAutoPlay';
+import {
   initializeNotifications,
   showPlaybackNotification,
   hidePlaybackNotification,
 } from '../../services/notificationService';
+import {
+  loadLastStation,
+  saveLastStation,
+  PersistedStation,
+} from '../../services/playbackPreferences';
+import { TrackPlayerState } from '../../services/trackPlayerService';
+import { useSettings } from './SettingsContext';
 
 export type Station = {
   id: string;
@@ -24,7 +36,7 @@ export type Station = {
   url: string;
 };
 
-export type PlaybackState = 'idle' | 'loading' | 'playing';
+export type PlaybackState = 'idle' | 'loading' | 'playing' | 'suspended';
 
 // Electron IPC types
 interface ElectronIPCRenderer {
@@ -62,6 +74,18 @@ type AudioContextType = {
 
 const AudioContext = createContext<AudioContextType | null>(null);
 
+function resolvePersistedStation(
+  station: PersistedStation | null,
+  stations: Station[]
+): Station | null {
+  if (!station) return null;
+  const savedStation =
+    stations.find(item => item.id === station.id) ||
+    stations.find(item => item.url === station.url);
+
+  return savedStation || station;
+}
+
 export function AudioProvider({
   children,
   stations,
@@ -69,6 +93,7 @@ export function AudioProvider({
   children: ReactNode;
   stations: Station[];
 }) {
+  const { autoPlayOnBluetooth } = useSettings();
   const [currentStation, setCurrentStation] = useState<Station | null>(null);
   const [lastStation, setLastStation] = useState<Station | null>(null);
   const [playbackState, setPlaybackState] = useState<PlaybackState>('idle');
@@ -84,10 +109,65 @@ export function AudioProvider({
   const stopPlaybackRef = useRef<() => Promise<void>>(async () => undefined);
   const primaryControlRef = useRef<() => void>(() => {});
   const trayPlayRef = useRef<() => void>(() => {});
+  const currentStationRef = useRef<Station | null>(null);
+  const lastStationRef = useRef<Station | null>(null);
+  const playbackStateRef = useRef<PlaybackState>('idle');
+  const stationsRef = useRef<Station[]>(stations);
+  const autoPlayOnBluetoothRef = useRef(autoPlayOnBluetooth);
+  const bluetoothAutoPlayTriggeredAtRef = useRef(0);
 
   // Track current play operation to prevent race conditions
   const playOperationIdRef = useRef<number>(0);
   const isPlayingRef = useRef<boolean>(false);
+  const isStartingPlaybackRef = useRef<boolean>(false);
+  const temporaryInterruptionActiveRef = useRef<boolean>(false);
+  const resumeAfterTemporaryInterruptionRef = useRef<boolean>(false);
+
+  const setPlaybackStateSynced = (nextState: PlaybackState) => {
+    playbackStateRef.current = nextState;
+    setPlaybackState(nextState);
+  };
+
+  useEffect(() => {
+    currentStationRef.current = currentStation;
+  }, [currentStation]);
+
+  useEffect(() => {
+    lastStationRef.current = lastStation;
+  }, [lastStation]);
+
+  useEffect(() => {
+    playbackStateRef.current = playbackState;
+  }, [playbackState]);
+
+  useEffect(() => {
+    stationsRef.current = stations;
+  }, [stations]);
+
+  useEffect(() => {
+    autoPlayOnBluetoothRef.current = autoPlayOnBluetooth;
+  }, [autoPlayOnBluetooth]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    loadLastStation()
+      .then(storedStation => {
+        const station = resolvePersistedStation(
+          storedStation,
+          stationsRef.current
+        );
+        if (!cancelled && station) {
+          setLastStation(station);
+          lastStationRef.current = station;
+        }
+      })
+      .catch(() => undefined);
+
+    return () => {
+      cancelled = true;
+    };
+  }, [stations]);
 
   // Fetch ICY metadata from stream
   const fetchStreamMetadata = async (streamUrl: string) => {
@@ -187,6 +267,8 @@ export function AudioProvider({
   const stopPlayback = async () => {
     stopMetadataPolling();
     isPlayingRef.current = false;
+    temporaryInterruptionActiveRef.current = false;
+    resumeAfterTemporaryInterruptionRef.current = false;
     const audioService = audioServiceRef.current;
     try {
       if (audioService) {
@@ -199,20 +281,138 @@ export function AudioProvider({
     } catch {
       // ignore
     }
-    setPlaybackState('idle');
+    setPlaybackStateSynced('idle');
     setCurrentStation(null);
   };
 
   stopPlaybackRef.current = stopPlayback;
+
+  const markPlaybackSuspended = () => {
+    stopMetadataPolling();
+    isPlayingRef.current = false;
+    setPlaybackStateSynced(
+      currentStationRef.current || lastStationRef.current ? 'suspended' : 'idle'
+    );
+  };
+
+  const syncNativePlaybackState = (nativeState: TrackPlayerState) => {
+    if (isStartingPlaybackRef.current) return;
+
+    switch (nativeState) {
+      case TrackPlayerState.Playing:
+        if (currentStationRef.current || lastStationRef.current) {
+          isPlayingRef.current = true;
+          setPlaybackStateSynced('playing');
+        }
+        break;
+      case TrackPlayerState.Loading:
+      case TrackPlayerState.Buffering:
+        if (
+          isPlayingRef.current ||
+          playbackStateRef.current === 'playing' ||
+          playbackStateRef.current === 'loading'
+        ) {
+          setPlaybackStateSynced('loading');
+        }
+        break;
+      case TrackPlayerState.Ready:
+      case TrackPlayerState.Paused:
+      case TrackPlayerState.Stopped:
+      case TrackPlayerState.None:
+      case TrackPlayerState.Ended:
+      case TrackPlayerState.Error:
+        if (
+          isPlayingRef.current ||
+          playbackStateRef.current === 'playing' ||
+          playbackStateRef.current === 'loading'
+        ) {
+          markPlaybackSuspended();
+        }
+        break;
+    }
+  };
+
+  const handleAudioFocusChange = (event: {
+    paused: boolean;
+    permanent: boolean;
+  }) => {
+    if (event.permanent) {
+      temporaryInterruptionActiveRef.current = false;
+      resumeAfterTemporaryInterruptionRef.current = false;
+      return;
+    }
+
+    if (event.paused) {
+      const shouldResume =
+        isPlayingRef.current ||
+        playbackStateRef.current === 'playing' ||
+        playbackStateRef.current === 'loading';
+
+      temporaryInterruptionActiveRef.current = true;
+      resumeAfterTemporaryInterruptionRef.current = shouldResume;
+
+      if (shouldResume) {
+        markPlaybackSuspended();
+      }
+      return;
+    }
+
+    const shouldResume =
+      temporaryInterruptionActiveRef.current &&
+      resumeAfterTemporaryInterruptionRef.current;
+
+    temporaryInterruptionActiveRef.current = false;
+    resumeAfterTemporaryInterruptionRef.current = false;
+
+    if (shouldResume) {
+      startLastStationPlayback();
+    }
+  };
+
+  const getLastPlayableStation = async (
+    fallbackToFirstStation: boolean = false
+  ): Promise<Station | null> => {
+    const immediateStation =
+      currentStationRef.current || lastStationRef.current;
+    if (immediateStation) return immediateStation;
+
+    const storedStation = await loadLastStation().catch(() => null);
+    const resolvedStation = resolvePersistedStation(
+      storedStation,
+      stationsRef.current
+    );
+    if (resolvedStation) return resolvedStation;
+
+    return fallbackToFirstStation ? (stationsRef.current[0] ?? null) : null;
+  };
+
+  const startLastStationPlayback = async (
+    fallbackToFirstStation: boolean = false
+  ) => {
+    if (
+      playbackStateRef.current === 'playing' ||
+      playbackStateRef.current === 'loading'
+    ) {
+      return;
+    }
+
+    const target = await getLastPlayableStation(fallbackToFirstStation);
+    if (target) {
+      playStationRef.current(target);
+    }
+  };
 
   const playStation = async (station: Station) => {
     // Increment operation ID to invalidate any pending play operations
     const operationId = ++playOperationIdRef.current;
 
     setStreamError(null);
-    setPlaybackState('loading');
+    setPlaybackStateSynced('loading');
+    temporaryInterruptionActiveRef.current = false;
+    resumeAfterTemporaryInterruptionRef.current = false;
     setNowPlayingTrack(null);
     setLastStation(station);
+    lastStationRef.current = station;
     setCurrentStation(station);
 
     try {
@@ -238,7 +438,9 @@ export function AudioProvider({
       }
 
       isPlayingRef.current = true;
+      isStartingPlaybackRef.current = true;
       await audioService.play(station.url, station.name);
+      isStartingPlaybackRef.current = false;
 
       // Verify this is still the current operation before updating state
       if (operationId !== playOperationIdRef.current) {
@@ -247,9 +449,11 @@ export function AudioProvider({
         return;
       }
 
-      setPlaybackState('playing');
+      setPlaybackStateSynced('playing');
+      saveLastStation(station).catch(() => undefined);
       startMetadataPolling(station.url);
     } catch (err) {
+      isStartingPlaybackRef.current = false;
       // Ignore "play interrupted by pause" errors - this is normal when fast-clicking
       const errorMessage = err instanceof Error ? err.message : String(err);
       const isInterruptedError =
@@ -260,7 +464,7 @@ export function AudioProvider({
       // Only update error state if this is still the current operation and not an interrupt
       if (operationId === playOperationIdRef.current && !isInterruptedError) {
         isPlayingRef.current = false;
-        setPlaybackState('idle');
+        setPlaybackStateSynced('idle');
         setCurrentStation(null);
         stopMetadataPolling();
         setStreamError(
@@ -298,11 +502,7 @@ export function AudioProvider({
   primaryControlRef.current = handlePrimaryControl;
 
   const startTrayPlay = () => {
-    if (playbackState === 'playing' || playbackState === 'loading') return;
-    const stationToPlay = currentStation || lastStation || stations[0];
-    if (stationToPlay) {
-      playStation(stationToPlay);
-    }
+    startLastStationPlayback(true);
   };
 
   trayPlayRef.current = startTrayPlay;
@@ -318,28 +518,28 @@ export function AudioProvider({
         if (audioServiceRef.current?.setCallbacks) {
           audioServiceRef.current.setCallbacks({
             onPlay: () => {
-              const target = currentStation || lastStation;
-              if (target) {
-                playStationRef.current(target);
-              }
+              startLastStationPlayback();
             },
             onPause: () => stopPlaybackRef.current(),
             onStop: () => stopPlaybackRef.current(),
             onNext: () => {
-              const currentIndex = stations.findIndex(
-                s => s.id === currentStation?.id
+              const currentIndex = stationsRef.current.findIndex(
+                s => s.id === currentStationRef.current?.id
               );
-              if (currentIndex >= 0 && currentIndex < stations.length - 1) {
-                const nextStation = stations[currentIndex + 1];
+              if (
+                currentIndex >= 0 &&
+                currentIndex < stationsRef.current.length - 1
+              ) {
+                const nextStation = stationsRef.current[currentIndex + 1];
                 if (nextStation) playStationRef.current(nextStation);
               }
             },
             onPrevious: () => {
-              const currentIndex = stations.findIndex(
-                s => s.id === currentStation?.id
+              const currentIndex = stationsRef.current.findIndex(
+                s => s.id === currentStationRef.current?.id
               );
               if (currentIndex > 0) {
-                const prevStation = stations[currentIndex - 1];
+                const prevStation = stationsRef.current[currentIndex - 1];
                 if (prevStation) playStationRef.current(prevStation);
               }
             },
@@ -348,6 +548,8 @@ export function AudioProvider({
                 setNowPlayingTrack(title);
               }
             },
+            onPlaybackState: syncNativePlaybackState,
+            onAudioFocusChange: handleAudioFocusChange,
           });
         }
       } catch (e) {
@@ -394,6 +596,32 @@ export function AudioProvider({
       } catch {
         // Ignore cleanup errors
       }
+    };
+  }, []);
+
+  useEffect(() => {
+    if (Platform.OS !== 'android' || !isBluetoothAutoPlayAvailable()) return;
+
+    const triggerBluetoothAutoPlay = () => {
+      if (!autoPlayOnBluetoothRef.current) return;
+
+      const now = Date.now();
+      if (now - bluetoothAutoPlayTriggeredAtRef.current < 10000) return;
+
+      bluetoothAutoPlayTriggeredAtRef.current = now;
+      startLastStationPlayback();
+    };
+
+    startBluetoothAutoPlayListener().catch(error => {
+      console.warn('Bluetooth auto-play listener failed:', error);
+    });
+
+    const subscription = addBluetoothAudioConnectedListener(() => {
+      triggerBluetoothAutoPlay();
+    });
+
+    return () => {
+      subscription?.remove();
     };
   }, []);
 

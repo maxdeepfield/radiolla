@@ -370,7 +370,7 @@ ipcMain.on('playback-mute-state', (_event, payload) => {
 });
 
 ipcMain.on('playback-state', (_event, state) => {
-  // state is 'idle' | 'loading' | 'playing'
+  // state is 'idle' | 'loading' | 'playing' | 'suspended'
   applyPlaybackStateToMenu(state === 'playing' || state === 'loading');
 });
 
