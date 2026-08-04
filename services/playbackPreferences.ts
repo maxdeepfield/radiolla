@@ -4,6 +4,7 @@ export type PersistedStation = {
   id: string;
   name: string;
   url: string;
+  type?: 'stream' | 'file';
 };
 
 export const LAST_STATION_STORAGE_KEY = 'Radiolla:last-station';
@@ -53,6 +54,7 @@ export function normalizePersistedStation(
     id: station.id,
     name,
     url,
+    type: station.type === 'file' ? 'file' : 'stream',
   };
 }
 
@@ -65,6 +67,7 @@ export async function saveLastStation(
       id: station.id,
       name: station.name,
       url: station.url,
+      type: station.type === 'file' ? 'file' : 'stream',
     })
   );
 }

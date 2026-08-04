@@ -3,6 +3,7 @@ import { View, Text, TouchableOpacity } from 'react-native';
 import { useSettings } from '../context/SettingsContext';
 import { useAudio } from '../context/AudioContext';
 import { VolumeSlider } from './VolumeSlider';
+import { SeekBar } from './SeekBar';
 
 type PlayerBarProps = {
   showVolumeSlider: boolean;
@@ -22,7 +23,10 @@ export function PlayerBar({
     nowPlayingTrack,
     streamError,
     volume,
+    position,
+    duration,
     setVolume,
+    seekTo,
     handlePrimaryControl,
   } = useAudio();
 
@@ -30,13 +34,22 @@ export function PlayerBar({
   if (playbackState === 'loading') {
     statusLabel = nowPlayingTrack || 'Buffering...';
   } else if (playbackState === 'playing') {
-    statusLabel = nowPlayingTrack || 'Streaming';
+    statusLabel =
+      currentStation?.type === 'file'
+        ? 'Playing local audio'
+        : nowPlayingTrack || 'Streaming';
+  } else if (playbackState === 'paused') {
+    statusLabel = 'Paused';
   } else if (currentStation) {
     statusLabel = streamError ? `Stopped · ${streamError}` : 'Stopped';
   }
 
   const controlIcon =
-    playbackState === 'playing' || playbackState === 'loading' ? '■' : '▶';
+    playbackState === 'playing' && currentStation?.type === 'file'
+      ? 'Ⅱ'
+      : playbackState === 'playing' || playbackState === 'loading'
+        ? '■'
+        : '▶';
 
   return (
     <View style={[styles.bottomBar, { paddingBottom: bottomInset + 8 }]}>
@@ -55,6 +68,9 @@ export function PlayerBar({
         >
           {statusLabel}
         </Text>
+        {currentStation?.type === 'file' && (
+          <SeekBar position={position} duration={duration} onSeek={seekTo} />
+        )}
       </View>
       <View style={styles.bottomControls}>
         {showVolumeSlider && (
@@ -78,9 +94,11 @@ export function PlayerBar({
             !currentStation && styles.disabledButton,
           ]}
           accessibilityLabel={
-            playbackState === 'playing' || playbackState === 'loading'
-              ? 'Stop'
-              : 'Play'
+            playbackState === 'playing' && currentStation?.type === 'file'
+              ? 'Pause'
+              : playbackState === 'playing' || playbackState === 'loading'
+                ? 'Stop'
+                : 'Play'
           }
         >
           <Text style={styles.controlIcon}>{controlIcon}</Text>

@@ -27,6 +27,7 @@ export const parsePlaylist = (content: string): Station[] => {
         id: Date.now().toString() + Math.random().toString(36).substr(2, 9),
         name: currentName,
         url: line,
+        type: /^https?:\/\//i.test(line) ? 'stream' : 'file',
       });
       currentName = 'Unknown Station'; // Reset for next entry
     }
@@ -62,6 +63,7 @@ const parsePLS = (lines: string[]): Station[] => {
         id: Date.now().toString() + Math.random().toString(36).substr(2, 9),
         name: entry.title || 'Unknown Station',
         url: entry.url,
+        type: /^https?:\/\//i.test(entry.url) ? 'stream' : 'file',
       });
     }
   });

@@ -7,7 +7,8 @@ const fs = require('fs');
 const path = require('path');
 
 const pkgPath = path.join(__dirname, '..', 'package.json');
-const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
+const originalPackageContents = fs.readFileSync(pkgPath, 'utf8');
+const pkg = JSON.parse(originalPackageContents);
 
 // Get config from package.json
 const appName = pkg.build?.productName || pkg.name || 'App';
@@ -19,7 +20,9 @@ console.log(`Building ${appName}...`);
 
 // Step 1: Export web build
 console.log('\n📦 Exporting web build...');
-execSync('npx -y expo export --platform web --output-dir dist', { stdio: 'inherit' });
+execSync('npx -y expo export --platform web --output-dir dist', {
+  stdio: 'inherit',
+});
 
 // Step 2: Fix absolute paths in index.html for Electron file:// protocol
 const indexPath = path.join(__dirname, '..', 'dist', 'index.html');
@@ -42,7 +45,9 @@ try {
   const startTime = Date.now();
 
   const args = [
-    '-y', '@electron/packager', '.',
+    '-y',
+    '@electron/packager',
+    '.',
     appName,
     '--platform=win32',
     '--arch=x64',
@@ -71,10 +76,11 @@ try {
   }
 
   const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
-  console.log(`\n✅ Build complete in ${elapsed}s! Output: build/${appName}-win32-x64`);
+  console.log(
+    `\n✅ Build complete in ${elapsed}s! Output: build/${appName}-win32-x64`
+  );
 } finally {
   // Restore original main
-  pkg.main = originalMain;
-  fs.writeFileSync(pkgPath, JSON.stringify(pkg, null, 2));
+  fs.writeFileSync(pkgPath, originalPackageContents);
   console.log('✓ Restored main to', originalMain);
 }

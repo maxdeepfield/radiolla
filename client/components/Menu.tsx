@@ -17,6 +17,7 @@ type MenuProps = {
   visible: boolean;
   onClose: () => void;
   onAddStation: () => void;
+  onAddAudioFiles: () => void;
   onImportExport: () => void;
   onSettings: () => void;
   onAbout: () => void;
@@ -26,6 +27,7 @@ export function Menu({
   visible,
   onClose,
   onAddStation,
+  onAddAudioFiles,
   onImportExport,
   onSettings,
   onAbout,
@@ -55,6 +57,16 @@ export function Menu({
             onPress={onAddStation}
           >
             <Text style={styles.menuItemLabel}>Add station</Text>
+          </Pressable>
+          <View style={styles.menuDivider} />
+          <Pressable
+            style={({ hovered, pressed }: PressableState) => [
+              styles.menuItem,
+              (hovered || pressed) && styles.menuItemActive,
+            ]}
+            onPress={onAddAudioFiles}
+          >
+            <Text style={styles.menuItemLabel}>Add audio files</Text>
           </Pressable>
           <View style={styles.menuDivider} />
           <Pressable

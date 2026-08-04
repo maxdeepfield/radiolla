@@ -22,6 +22,10 @@ import { SettingsProvider, useSettings } from './context/SettingsContext';
 import { StationsProvider, useStations } from './context/StationsContext';
 import { AudioProvider, useAudio } from './context/AudioContext';
 import type { Station } from './context/StationsContext';
+import {
+  LocalAudioFile,
+  pickLocalAudioFiles,
+} from '../services/localAudioFiles';
 
 import {
   Header,
@@ -44,14 +48,21 @@ function AppContent() {
   const {
     stations,
     addStation,
+    addAudioFiles,
     updateStation,
     removeStation,
     reorderStations,
     clearStations,
     toggleFavorite,
+    isLoaded,
   } = useStations();
-  const { currentStation, playbackState, playStation, stopPlayback } =
-    useAudio();
+  const {
+    currentStation,
+    playbackState,
+    playStation,
+    stopPlayback,
+    handlePrimaryControl,
+  } = useAudio();
 
   // UI State
   const [menuOpen, setMenuOpen] = useState(false);
@@ -217,11 +228,8 @@ function AppContent() {
   // Station handlers
   const handleStationPress = (station: Station) => {
     setContextStationId(null);
-    if (
-      currentStation?.id === station.id &&
-      playbackState !== 'idle'
-    ) {
-      stopPlayback();
+    if (currentStation?.id === station.id && playbackState !== 'idle') {
+      handlePrimaryControl();
     } else {
       playStation(station);
     }
@@ -303,6 +311,58 @@ function AppContent() {
     setShowImportModal(true);
   };
 
+  const addFilesToLibrary = async (
+    files: LocalAudioFile[],
+    playFirst: boolean = false
+  ) => {
+    const added = await addAudioFiles(files);
+    if (playFirst && added[0]) {
+      await playStation(added[0]);
+    }
+  };
+
+  const openAudioFiles = async () => {
+    closeMenu();
+    try {
+      const files = await pickLocalAudioFiles();
+      await addFilesToLibrary(files);
+    } catch (error) {
+      setUnexpectedError(
+        error instanceof Error ? error.message : 'Unable to add audio files.'
+      );
+    }
+  };
+
+  useEffect(() => {
+    if (!isLoaded || Platform.OS !== 'web' || typeof window === 'undefined') {
+      return;
+    }
+    const ipc = (window as any).ipcRenderer;
+    if (!ipc?.on) return;
+
+    const receiveFiles = (_event: unknown, payload: unknown) => {
+      if (!Array.isArray(payload)) return;
+      const files = payload.filter(
+        (file): file is LocalAudioFile =>
+          !!file &&
+          typeof file === 'object' &&
+          typeof file.name === 'string' &&
+          typeof file.url === 'string'
+      );
+      addFilesToLibrary(files, true).catch(error => {
+        setUnexpectedError(
+          error instanceof Error ? error.message : 'Unable to open audio file.'
+        );
+      });
+    };
+
+    ipc.on('open-audio-files', receiveFiles);
+    ipc.invoke?.('consume-pending-audio-files').then((payload: unknown) => {
+      receiveFiles(undefined, payload);
+    });
+    return () => ipc.removeListener?.('open-audio-files', receiveFiles);
+  }, [isLoaded]);
+
   const openSettingsModal = () => {
     closeMenu();
     setShowSettingsModal(true);
@@ -346,6 +406,7 @@ function AppContent() {
             visible={menuOpen}
             onClose={closeMenu}
             onAddStation={openAddModal}
+            onAddAudioFiles={openAudioFiles}
             onImportExport={openImportModal}
             onSettings={openSettingsModal}
             onAbout={openAbout}
@@ -368,7 +429,8 @@ function AppContent() {
                 const active =
                   currentStation?.id === station.id &&
                   (playbackState === 'playing' ||
-                    playbackState === 'loading');
+                    playbackState === 'loading' ||
+                    playbackState === 'paused');
                 const playing = active;
                 const highlighted = active;
 

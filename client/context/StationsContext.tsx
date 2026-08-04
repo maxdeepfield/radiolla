@@ -11,6 +11,7 @@ export type Station = {
   id: string;
   name: string;
   url: string;
+  type?: 'stream' | 'file';
   favorite?: boolean;
 };
 
@@ -19,6 +20,9 @@ const STORAGE_KEY = 'Radiolla:stations';
 type StationsContextType = {
   stations: Station[];
   addStation: (name: string, url: string) => Promise<Station>;
+  addAudioFiles: (
+    files: Array<{ name: string; url: string }>
+  ) => Promise<Station[]>;
   updateStation: (station: Station) => Promise<void>;
   removeStation: (id: string) => Promise<void>;
   reorderStations: (fromIndex: number, toIndex: number) => Promise<void>;
@@ -64,11 +68,40 @@ export function StationsProvider({ children }: { children: ReactNode }) {
       id: Date.now().toString(),
       name: name.trim(),
       url: url.trim(),
+      type: 'stream',
       favorite: false,
     };
     const next = [...stations, newStation];
     await persistStations(next);
     return newStation;
+  };
+
+  const addAudioFiles = async (
+    files: Array<{ name: string; url: string }>
+  ): Promise<Station[]> => {
+    const existingFiles = new Set(
+      stations
+        .filter(station => station.type === 'file')
+        .map(station => station.url)
+    );
+    const timestamp = Date.now();
+    const added = files
+      .filter(file => file.name.trim() && file.url.trim())
+      .filter(file => !existingFiles.has(file.url.trim()))
+      .map(
+        (file, index): Station => ({
+          id: `${timestamp}-${index}-${Math.random().toString(36).slice(2, 8)}`,
+          name: file.name.trim(),
+          url: file.url.trim(),
+          type: 'file',
+          favorite: false,
+        })
+      );
+
+    if (added.length > 0) {
+      await persistStations([...stations, ...added]);
+    }
+    return added;
   };
 
   const updateStation = async (updated: Station) => {
@@ -116,6 +149,7 @@ export function StationsProvider({ children }: { children: ReactNode }) {
   const value: StationsContextType = {
     stations,
     addStation,
+    addAudioFiles,
     updateStation,
     removeStation,
     reorderStations,

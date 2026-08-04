@@ -26,14 +26,16 @@ import {
   saveStationLibrary,
 } from '../../services/playbackPreferences';
 import { useSettings } from './SettingsContext';
+import { prepareLocalAudioUrl } from '../../services/localAudioFiles';
 
 export type Station = {
   id: string;
   name: string;
   url: string;
+  type?: 'stream' | 'file';
 };
 
-export type PlaybackState = 'idle' | 'loading' | 'playing';
+export type PlaybackState = 'idle' | 'loading' | 'playing' | 'paused';
 
 // Electron IPC types
 interface ElectronIPCRenderer {
@@ -61,9 +63,12 @@ type AudioContextType = {
   nowPlayingTrack: string | null;
   streamError: string | null;
   volume: number;
+  position: number;
+  duration: number;
   playStation: (station: Station) => Promise<void>;
   stopPlayback: () => Promise<void>;
   setVolume: (vol: number) => Promise<void>;
+  seekTo: (position: number) => Promise<void>;
   handlePrimaryControl: () => void;
   audioServiceRef: React.MutableRefObject<AudioService | null>;
 };
@@ -95,6 +100,8 @@ export function AudioProvider({
   const [nowPlayingTrack, setNowPlayingTrack] = useState<string | null>(null);
   const [streamError, setStreamError] = useState<string | null>(null);
   const [volume, setVolumeState] = useState(1.0);
+  const [position, setPosition] = useState(0);
+  const [duration, setDuration] = useState(0);
 
   const audioServiceRef = useRef<AudioService | null>(null);
   const metadataIntervalRef = useRef<ReturnType<typeof setInterval> | null>(
@@ -253,6 +260,8 @@ export function AudioProvider({
       // ignore
     }
     setPlaybackStateSynced('idle');
+    setPosition(0);
+    setDuration(0);
   };
 
   const getLastPlayableStation = async (
@@ -294,6 +303,8 @@ export function AudioProvider({
     setNowPlayingTrack(null);
     setCurrentStation(station);
     currentStationRef.current = station;
+    setPosition(0);
+    setDuration(0);
 
     const queuedPlay = playQueueRef.current
       .catch(() => undefined)
@@ -306,7 +317,15 @@ export function AudioProvider({
             throw new Error('Audio service not initialized');
           }
 
-          await audioService.play(station.url, station.name);
+          const playbackUrl =
+            station.type === 'file'
+              ? await prepareLocalAudioUrl(station.url)
+              : station.url;
+          await audioService.play(
+            playbackUrl,
+            station.name,
+            station.type === 'file'
+          );
 
           if (requestedStationRef.current?.id !== station.id) {
             await audioService.stop();
@@ -315,7 +334,11 @@ export function AudioProvider({
 
           setPlaybackStateSynced('playing');
           saveLastStation(station).catch(() => undefined);
-          startMetadataPolling(station.url);
+          if (station.type === 'file') {
+            stopMetadataPolling();
+          } else {
+            startMetadataPolling(station.url);
+          }
         } catch {
           if (requestedStationRef.current?.id !== station.id) return;
 
@@ -349,13 +372,32 @@ export function AudioProvider({
     }
   };
 
-  const handlePrimaryControl = () => {
+  const seekTo = async (nextPosition: number) => {
+    const audioService = audioServiceRef.current;
+    if (!audioService || currentStationRef.current?.type !== 'file') return;
+    const clamped = Math.max(
+      0,
+      Math.min(duration || nextPosition, nextPosition)
+    );
+    await audioService.seekTo(clamped);
+    setPosition(clamped);
+  };
+
+  const handlePrimaryControl = async () => {
     const target = currentStation;
     if (!target) return;
     if (playbackState === 'playing' || playbackState === 'loading') {
-      stopPlayback();
+      if (target.type === 'file' && playbackState === 'playing') {
+        await audioServiceRef.current?.pause();
+        setPlaybackStateSynced('paused');
+      } else {
+        await stopPlayback();
+      }
+    } else if (playbackState === 'paused' && target.type === 'file') {
+      await audioServiceRef.current?.resume();
+      setPlaybackStateSynced('playing');
     } else {
-      playStation(target);
+      await playStation(target);
     }
   };
 
@@ -375,12 +417,29 @@ export function AudioProvider({
 
         audioServiceRef.current.setCallbacks({
           onMetadata: title => {
-            if (requestedStationRef.current && playbackStateRef.current !== 'idle') {
+            if (
+              requestedStationRef.current &&
+              playbackStateRef.current !== 'idle'
+            ) {
               setNowPlayingTrack(title);
             }
           },
+          onEnded: () => {
+            const active = currentStationRef.current;
+            if (!active || active.type !== 'file') return;
+            const currentIndex = stationsRef.current.findIndex(
+              station => station.id === active.id
+            );
+            const nextFile = stationsRef.current
+              .slice(currentIndex + 1)
+              .find(station => station.type === 'file');
+            if (nextFile) {
+              playStationRef.current(nextFile);
+            } else {
+              setPlaybackStateSynced('idle');
+            }
+          },
         });
-
       } catch (e) {
         console.warn('Bootstrap failed:', e);
       }
@@ -392,6 +451,26 @@ export function AudioProvider({
       stopPlayback();
     };
   }, []);
+
+  useEffect(() => {
+    if (currentStation?.type !== 'file' || playbackState === 'idle') {
+      return;
+    }
+
+    let active = true;
+    const updateProgress = async () => {
+      const progress = await audioServiceRef.current?.getProgress();
+      if (!active || !progress) return;
+      setPosition(progress.position);
+      setDuration(progress.duration);
+    };
+    updateProgress();
+    const interval = setInterval(updateProgress, 500);
+    return () => {
+      active = false;
+      clearInterval(interval);
+    };
+  }, [currentStation?.id, currentStation?.type, playbackState]);
 
   useEffect(() => {
     if (Platform.OS !== 'android' || !isBluetoothAutoPlayAvailable()) return;
@@ -425,9 +504,12 @@ export function AudioProvider({
     nowPlayingTrack,
     streamError,
     volume,
+    position,
+    duration,
     playStation,
     stopPlayback,
     setVolume,
+    seekTo,
     handlePrimaryControl,
     audioServiceRef,
   };

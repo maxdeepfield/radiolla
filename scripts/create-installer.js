@@ -7,7 +7,8 @@ const fs = require('fs');
 const path = require('path');
 
 const pkgPath = path.join(__dirname, '..', 'package.json');
-const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
+const originalPackageContents = fs.readFileSync(pkgPath, 'utf8');
+const pkg = JSON.parse(originalPackageContents);
 
 // Get config from package.json
 const appName = pkg.build?.productName || pkg.name || 'App';
@@ -49,7 +50,6 @@ try {
   console.log(`   ${appName} Setup ${version}.exe`);
 } finally {
   // Restore original main
-  pkg.main = originalMain;
-  fs.writeFileSync(pkgPath, JSON.stringify(pkg, null, 2));
+  fs.writeFileSync(pkgPath, originalPackageContents);
   console.log('✓ Restored main to', originalMain);
 }

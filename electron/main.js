@@ -2,7 +2,57 @@ const path = require('path');
 const fs = require('fs');
 const http = require('http');
 const url = require('url');
-const { app, BrowserWindow, shell, Tray, Menu, ipcMain } = require('electron');
+const {
+  app,
+  BrowserWindow,
+  shell,
+  Tray,
+  Menu,
+  ipcMain,
+  dialog,
+} = require('electron');
+
+const SUPPORTED_AUDIO_EXTENSIONS = new Set([
+  '.mp3',
+  '.aac',
+  '.m4a',
+  '.wav',
+  '.ogg',
+  '.flac',
+]);
+const allowedLocalAudioPaths = new Set();
+let pendingAudioFiles = [];
+let rendererReady = false;
+
+const normalizeAudioPath = candidate => {
+  if (typeof candidate !== 'string') return null;
+  const unquoted = candidate.replace(/^"|"$/g, '');
+  const resolved = path.resolve(unquoted);
+  if (!SUPPORTED_AUDIO_EXTENSIONS.has(path.extname(resolved).toLowerCase())) {
+    return null;
+  }
+  try {
+    return fs.statSync(resolved).isFile() ? resolved : null;
+  } catch {
+    return null;
+  }
+};
+
+const toAudioFilePayload = filePaths =>
+  filePaths.map(filePath => ({ name: path.basename(filePath), url: filePath }));
+
+const openAudioPaths = candidates => {
+  const paths = candidates.map(normalizeAudioPath).filter(Boolean);
+  if (paths.length === 0) return;
+  paths.forEach(filePath => allowedLocalAudioPaths.add(filePath));
+  const payload = toAudioFilePayload(paths);
+
+  if (rendererReady && mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('open-audio-files', payload);
+  } else {
+    pendingAudioFiles.push(...payload);
+  }
+};
 
 // Single Instance Lock
 const gotTheLock = app.requestSingleInstanceLock();
@@ -12,6 +62,7 @@ if (!gotTheLock) {
   process.exit(); // Stop execution if we don't have the lock
 } else {
   app.on('second-instance', (event, commandLine, workingDirectory) => {
+    openAudioPaths(commandLine);
     // Someone tried to run a second instance, we should focus our window.
     if (mainWindow) {
       if (mainWindow.isMinimized()) mainWindow.restore();
@@ -22,20 +73,26 @@ if (!gotTheLock) {
 }
 
 const mimeTypes = {
+  '.aac': 'audio/aac',
   '.css': 'text/css',
   '.html': 'text/html',
   '.ico': 'image/x-icon',
+  '.flac': 'audio/flac',
   '.jpeg': 'image/jpeg',
   '.jpg': 'image/jpeg',
   '.js': 'application/javascript',
+  '.m4a': 'audio/mp4',
   '.json': 'application/json',
   '.map': 'application/json',
   '.png': 'image/png',
+  '.mp3': 'audio/mpeg',
+  '.ogg': 'audio/ogg',
   '.svg': 'image/svg+xml',
   '.ttf': 'font/ttf',
   '.webp': 'image/webp',
   '.woff': 'font/woff',
   '.woff2': 'font/woff2',
+  '.wav': 'audio/wav',
 };
 
 let staticServer;
@@ -47,6 +104,59 @@ let isPlaying = false;
 const iconFileName = 'favicon.ico';
 const STATIC_HOST = '127.0.0.1';
 const STATIC_PORT = 19573;
+
+const serveLocalAudio = (req, res, filePath) => {
+  if (!allowedLocalAudioPaths.has(filePath)) {
+    res.writeHead(403);
+    res.end('Forbidden');
+    return;
+  }
+
+  let stat;
+  try {
+    stat = fs.statSync(filePath);
+  } catch {
+    res.writeHead(404);
+    res.end('Not found');
+    return;
+  }
+
+  const range = req.headers.range;
+  const contentType =
+    mimeTypes[path.extname(filePath).toLowerCase()] ||
+    'application/octet-stream';
+  if (!range) {
+    res.writeHead(200, {
+      'Accept-Ranges': 'bytes',
+      'Content-Length': stat.size,
+      'Content-Type': contentType,
+    });
+    fs.createReadStream(filePath).pipe(res);
+    return;
+  }
+
+  const match = /^bytes=(\d*)-(\d*)$/.exec(range);
+  if (!match) {
+    res.writeHead(416, { 'Content-Range': `bytes */${stat.size}` });
+    res.end();
+    return;
+  }
+  const start = match[1] ? Number(match[1]) : 0;
+  const end = match[2] ? Number(match[2]) : stat.size - 1;
+  if (start > end || end >= stat.size) {
+    res.writeHead(416, { 'Content-Range': `bytes */${stat.size}` });
+    res.end();
+    return;
+  }
+
+  res.writeHead(206, {
+    'Accept-Ranges': 'bytes',
+    'Content-Length': end - start + 1,
+    'Content-Range': `bytes ${start}-${end}/${stat.size}`,
+    'Content-Type': contentType,
+  });
+  fs.createReadStream(filePath, { start, end }).pipe(res);
+};
 
 // Window state persistence
 const getWindowStatePath = () =>
@@ -80,7 +190,16 @@ const saveWindowState = win => {
 const startStaticServer = rootDir =>
   new Promise((resolve, reject) => {
     const server = http.createServer((req, res) => {
-      const { pathname = '/' } = url.parse(req.url);
+      const requestUrl = new URL(
+        req.url,
+        `http://${STATIC_HOST}:${STATIC_PORT}`
+      );
+      const { pathname = '/' } = requestUrl;
+      if (pathname === '/__radiolla_audio__') {
+        const filePath = requestUrl.searchParams.get('path');
+        serveLocalAudio(req, res, filePath || '');
+        return;
+      }
       const cleanedPath = decodeURIComponent(pathname.replace(/^\/+/, ''));
       const targetPath = path.normalize(
         path.join(rootDir, cleanedPath || 'index.html')
@@ -312,6 +431,7 @@ const createWindow = async () => {
 
       console.log('Loading content from:', contentUrl);
       await win.loadURL(contentUrl);
+      rendererReady = true;
     } catch (err) {
       console.error('Failed to load main content', err);
     }
@@ -372,6 +492,44 @@ ipcMain.on('playback-mute-state', (_event, payload) => {
 ipcMain.on('playback-state', (_event, state) => {
   // state is 'idle' | 'loading' | 'playing' | 'suspended'
   applyPlaybackStateToMenu(state === 'playing' || state === 'loading');
+});
+
+ipcMain.handle('pick-audio-files', async () => {
+  const result = await dialog.showOpenDialog(mainWindow, {
+    title: 'Add audio files',
+    properties: ['openFile', 'multiSelections'],
+    filters: [
+      {
+        name: 'Audio files',
+        extensions: [...SUPPORTED_AUDIO_EXTENSIONS].map(extension =>
+          extension.slice(1)
+        ),
+      },
+    ],
+  });
+  if (result.canceled) return [];
+  const paths = result.filePaths.map(normalizeAudioPath).filter(Boolean);
+  paths.forEach(filePath => allowedLocalAudioPaths.add(filePath));
+  return paths.map(filePath => ({
+    name: path.basename(filePath),
+    path: filePath,
+  }));
+});
+
+ipcMain.handle('prepare-local-audio', async (_event, candidate) => {
+  const filePath = normalizeAudioPath(candidate);
+  if (!filePath) return null;
+  allowedLocalAudioPaths.add(filePath);
+  const server =
+    staticServer ||
+    (await ensureStaticServer(path.join(__dirname, '..', 'dist')));
+  return `${server.url}/__radiolla_audio__?path=${encodeURIComponent(filePath)}`;
+});
+
+ipcMain.handle('consume-pending-audio-files', () => {
+  const payload = pendingAudioFiles;
+  pendingAudioFiles = [];
+  return payload;
 });
 
 // Fetch ICY metadata from stream (bypasses CORS)
@@ -442,6 +600,7 @@ ipcMain.handle('fetch-stream-metadata', async (_event, streamUrl) => {
 });
 
 app.whenReady().then(() => {
+  openAudioPaths(process.argv);
   createWindow().catch(err => {
     // Log startup failures instead of crashing silently.
     console.error('Failed to create window', err);

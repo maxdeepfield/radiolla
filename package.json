@@ -110,6 +110,21 @@
       ],
       "artifactName": "Radiolla-Setup-${version}-${arch}.${ext}"
     },
+    "fileAssociations": [
+      {
+        "ext": [
+          "mp3",
+          "aac",
+          "m4a",
+          "wav",
+          "ogg",
+          "flac"
+        ],
+        "name": "Audio file",
+        "description": "Audio file opened with Radiolla",
+        "role": "Viewer"
+      }
+    ],
     "nsis": {
       "installerIcon": "assets/icon.ico",
       "uninstallerIcon": "assets/icon.ico",

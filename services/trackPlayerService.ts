@@ -22,10 +22,12 @@ type AudioMetadata = AudioCommonMetadata & {
 
 export type TrackPlayerServiceCallbacks = {
   onMetadata?: (title: string) => void;
+  onEnded?: () => void;
 };
 
 let serviceCallbacks: TrackPlayerServiceCallbacks = {};
 let metadataListenersRegistered = false;
+let playbackListenersRegistered = false;
 
 export function setTrackPlayerCallbacks(
   callbacks: TrackPlayerServiceCallbacks
@@ -115,6 +117,14 @@ function registerMetadataListeners() {
   metadataListenersRegistered = true;
 }
 
+function registerPlaybackListeners() {
+  if (playbackListenersRegistered) return;
+  TrackPlayer.addEventListener(Event.PlaybackQueueEnded, () => {
+    serviceCallbacks.onEnded?.();
+  });
+  playbackListenersRegistered = true;
+}
+
 function isAlreadyInitializedError(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);
   return message.toLowerCase().includes('already been initialized');
@@ -124,19 +134,21 @@ export async function setupTrackPlayer(): Promise<void> {
   if (Platform.OS === 'web') return; // Guard against Web execution
   if (isSetup) {
     registerMetadataListeners();
+    registerPlaybackListeners();
     return;
   }
 
   try {
-    await TrackPlayer.setupPlayer({
-    });
+    await TrackPlayer.setupPlayer({});
 
     await TrackPlayer.setRepeatMode(RepeatMode.Off);
     registerMetadataListeners();
+    registerPlaybackListeners();
     isSetup = true;
   } catch (error) {
     if (isAlreadyInitializedError(error)) {
       registerMetadataListeners();
+      registerPlaybackListeners();
       isSetup = true;
       return;
     }
@@ -147,7 +159,8 @@ export async function setupTrackPlayer(): Promise<void> {
 export async function playStream(
   url: string,
   title: string,
-  artist: string = 'Radiolla'
+  artist: string = 'Radiolla',
+  isLiveStream: boolean = true
 ): Promise<void> {
   if (Platform.OS === 'web') return; // Guard against Web execution
 
@@ -158,7 +171,7 @@ export async function playStream(
       url,
       title,
       artist,
-      isLiveStream: true,
+      isLiveStream,
     });
     await TrackPlayer.play();
   } catch (error) {
@@ -205,6 +218,27 @@ export async function setTrackPlayerVolume(volume: number): Promise<void> {
     await TrackPlayer.setVolume(volume);
   } catch (error) {
     console.error('TrackPlayer setVolume failed:', error);
+  }
+}
+
+export async function seekTrackPlayerTo(position: number): Promise<void> {
+  if (Platform.OS === 'web') return;
+  await TrackPlayer.seekTo(Math.max(0, position));
+}
+
+export async function getTrackPlayerProgress(): Promise<{
+  position: number;
+  duration: number;
+}> {
+  if (Platform.OS === 'web') return { position: 0, duration: 0 };
+  try {
+    const progress = await TrackPlayer.getProgress();
+    return {
+      position: Number.isFinite(progress.position) ? progress.position : 0,
+      duration: Number.isFinite(progress.duration) ? progress.duration : 0,
+    };
+  } catch {
+    return { position: 0, duration: 0 };
   }
 }
 
