@@ -82,7 +82,15 @@ export function StationsProvider({ children }: { children: ReactNode }) {
   };
 
   const reorderStations = async (fromIndex: number, toIndex: number) => {
-    if (fromIndex === toIndex) return;
+    if (
+      fromIndex === toIndex ||
+      fromIndex < 0 ||
+      toIndex < 0 ||
+      fromIndex >= stations.length ||
+      toIndex >= stations.length
+    ) {
+      return;
+    }
     const newStations = [...stations];
     const [movedStation] = newStations.splice(fromIndex, 1);
     newStations.splice(toIndex, 0, movedStation);

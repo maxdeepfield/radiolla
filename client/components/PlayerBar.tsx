@@ -18,7 +18,6 @@ export function PlayerBar({
   const { styles } = useSettings();
   const {
     currentStation,
-    lastStation,
     playbackState,
     nowPlayingTrack,
     streamError,
@@ -27,16 +26,12 @@ export function PlayerBar({
     handlePrimaryControl,
   } = useAudio();
 
-  const activeStation = currentStation || lastStation;
-
   let statusLabel = 'Ready';
   if (playbackState === 'loading') {
-    statusLabel = 'Buffering...';
+    statusLabel = nowPlayingTrack || 'Buffering...';
   } else if (playbackState === 'playing') {
     statusLabel = nowPlayingTrack || 'Streaming';
-  } else if (playbackState === 'suspended') {
-    statusLabel = 'Paused by other audio';
-  } else if (activeStation) {
+  } else if (currentStation) {
     statusLabel = streamError ? `Stopped · ${streamError}` : 'Stopped';
   }
 
@@ -51,7 +46,7 @@ export function PlayerBar({
           numberOfLines={1}
           ellipsizeMode="tail"
         >
-          {activeStation ? activeStation.name : 'No station selected'}
+          {currentStation ? currentStation.name : 'No station selected'}
         </Text>
         <Text
           style={styles.nowPlayingSubtitle}
@@ -73,14 +68,14 @@ export function PlayerBar({
         </TouchableOpacity>
         <TouchableOpacity
           onPress={handlePrimaryControl}
-          disabled={!activeStation}
+          disabled={!currentStation}
           style={[
             styles.button,
             playbackState === 'playing' || playbackState === 'loading'
               ? styles.secondaryButton
               : styles.primaryButton,
             styles.controlButton,
-            !activeStation && styles.disabledButton,
+            !currentStation && styles.disabledButton,
           ]}
           accessibilityLabel={
             playbackState === 'playing' || playbackState === 'loading'

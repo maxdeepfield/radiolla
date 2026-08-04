@@ -1,14 +1,10 @@
 import TrackPlayer, {
   Event,
   State,
-  Capability,
-  AppKilledPlaybackBehavior,
   RepeatMode,
-  RemoteDuckEvent,
   PlaybackState,
 } from 'react-native-track-player';
 import { Platform } from 'react-native';
-import { loadLastStation } from './playbackPreferences';
 
 type AudioCommonMetadata = {
   title?: string;
@@ -25,19 +21,11 @@ type AudioMetadata = AudioCommonMetadata & {
 };
 
 export type TrackPlayerServiceCallbacks = {
-  onPlay?: () => void;
-  onPause?: () => void;
-  onStop?: () => void;
-  onNext?: () => void;
-  onPrevious?: () => void;
   onMetadata?: (title: string) => void;
-  onPlaybackState?: (state: State) => void;
-  onAudioFocusChange?: (event: RemoteDuckEvent) => void;
 };
 
 let serviceCallbacks: TrackPlayerServiceCallbacks = {};
 let metadataListenersRegistered = false;
-let playbackStateListenersRegistered = false;
 
 export function setTrackPlayerCallbacks(
   callbacks: TrackPlayerServiceCallbacks
@@ -45,98 +33,9 @@ export function setTrackPlayerCallbacks(
   serviceCallbacks = callbacks;
 }
 
-async function playActiveOrPersistedStation(): Promise<void> {
-  const activeTrackIndex = await TrackPlayer.getActiveTrackIndex().catch(
-    () => undefined
-  );
-
-  if (activeTrackIndex !== undefined) {
-    await TrackPlayer.play();
-    return;
-  }
-
-  const station = await loadLastStation();
-  if (!station) return;
-
-  await TrackPlayer.reset();
-  await TrackPlayer.add({
-    id: 'current-stream',
-    url: station.url,
-    title: station.name,
-    artist: 'Radiolla',
-    isLiveStream: true,
-  });
-  await TrackPlayer.play();
-}
-
-function emitPlaybackState(state: State) {
-  serviceCallbacks.onPlaybackState?.(state);
-}
-
-function emitAudioFocusChange(event: RemoteDuckEvent) {
-  serviceCallbacks.onAudioFocusChange?.(event);
-}
-
-// Playback service - handles remote events (notification controls, lock screen, etc.)
-export async function PlaybackService() {
-  registerPlaybackStateListeners();
-
-  TrackPlayer.addEventListener(Event.RemotePlay, () => {
-    if (serviceCallbacks.onPlay) {
-      serviceCallbacks.onPlay();
-      return;
-    }
-
-    playActiveOrPersistedStation().catch(error => {
-      console.error('RemotePlay failed:', error);
-    });
-  });
-
-  TrackPlayer.addEventListener(Event.RemotePause, () => {
-    TrackPlayer.pause();
-    serviceCallbacks.onPause?.();
-  });
-
-  TrackPlayer.addEventListener(Event.RemoteStop, () => {
-    TrackPlayer.stop();
-    serviceCallbacks.onStop?.();
-  });
-
-  TrackPlayer.addEventListener(Event.RemoteNext, () => {
-    serviceCallbacks.onNext?.();
-  });
-
-  TrackPlayer.addEventListener(Event.RemotePrevious, () => {
-    serviceCallbacks.onPrevious?.();
-  });
-
-  TrackPlayer.addEventListener(
-    Event.RemoteDuck,
-    async (event: RemoteDuckEvent) => {
-      emitAudioFocusChange(event);
-
-      if (event.permanent) {
-        await TrackPlayer.stop();
-        emitPlaybackState(State.Stopped);
-      } else if (event.paused) {
-        await TrackPlayer.pause();
-        emitPlaybackState(State.Paused);
-      }
-    }
-  );
-}
+export async function PlaybackService(): Promise<void> {}
 
 let isSetup = false;
-
-function isNoCurrentItemError(error: unknown): boolean {
-  const message = error instanceof Error ? error.message : String(error);
-  return message.toLowerCase().includes('no current item');
-}
-
-function isAlreadyInitializedError(error: unknown): boolean {
-  const message = error instanceof Error ? error.message : String(error);
-  return message.toLowerCase().includes('already been initialized');
-}
 
 function cleanMetadataValue(value: unknown): string | null {
   if (typeof value !== 'string') return null;
@@ -198,20 +97,6 @@ function emitMetadataTitle(title: string | null) {
   }
 }
 
-function registerPlaybackStateListeners() {
-  if (playbackStateListenersRegistered) return;
-
-  TrackPlayer.addEventListener(Event.PlaybackState, event => {
-    emitPlaybackState(event.state);
-  });
-
-  TrackPlayer.addEventListener(Event.PlaybackError, () => {
-    emitPlaybackState(State.Error);
-  });
-
-  playbackStateListenersRegistered = true;
-}
-
 function registerMetadataListeners() {
   if (metadataListenersRegistered) return;
 
@@ -230,47 +115,28 @@ function registerMetadataListeners() {
   metadataListenersRegistered = true;
 }
 
+function isAlreadyInitializedError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.toLowerCase().includes('already been initialized');
+}
+
 export async function setupTrackPlayer(): Promise<void> {
   if (Platform.OS === 'web') return; // Guard against Web execution
   if (isSetup) {
     registerMetadataListeners();
-    registerPlaybackStateListeners();
     return;
   }
 
   try {
     await TrackPlayer.setupPlayer({
-      autoHandleInterruptions: true,
-    });
-
-    await TrackPlayer.updateOptions({
-      android: {
-        appKilledPlaybackBehavior: AppKilledPlaybackBehavior.ContinuePlayback,
-      },
-      capabilities: [
-        Capability.Play,
-        Capability.Pause,
-        Capability.Stop,
-        Capability.SkipToNext,
-        Capability.SkipToPrevious,
-      ],
-      notificationCapabilities: [
-        Capability.Play,
-        Capability.Pause,
-        Capability.Stop,
-        Capability.SkipToNext,
-        Capability.SkipToPrevious,
-      ],
     });
 
     await TrackPlayer.setRepeatMode(RepeatMode.Off);
     registerMetadataListeners();
-    registerPlaybackStateListeners();
     isSetup = true;
   } catch (error) {
     if (isAlreadyInitializedError(error)) {
       registerMetadataListeners();
-      registerPlaybackStateListeners();
       isSetup = true;
       return;
     }
@@ -339,26 +205,6 @@ export async function setTrackPlayerVolume(volume: number): Promise<void> {
     await TrackPlayer.setVolume(volume);
   } catch (error) {
     console.error('TrackPlayer setVolume failed:', error);
-  }
-}
-
-export async function updateTrackMetadata(
-  title: string,
-  artist: string = 'Radiolla'
-): Promise<void> {
-  if (Platform.OS === 'web') return; // Guard against Web execution
-
-  try {
-    const activeTrackIndex = await TrackPlayer.getActiveTrackIndex();
-    if (activeTrackIndex === undefined) return;
-
-    await TrackPlayer.updateNowPlayingMetadata({
-      title,
-      artist,
-    });
-  } catch (error) {
-    if (isNoCurrentItemError(error)) return;
-    console.error('TrackPlayer updateMetadata failed:', error);
   }
 }
 

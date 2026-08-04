@@ -5,7 +5,6 @@ import {
   playStream,
   stopStream,
   setTrackPlayerVolume,
-  updateTrackMetadata,
   setTrackPlayerCallbacks,
   TrackPlayerServiceCallbacks,
 } from './trackPlayerService';
@@ -14,18 +13,14 @@ export type AudioService = {
   play: (url: string, stationName: string) => Promise<void>;
   stop: () => Promise<void>;
   setVolume: (volume: number) => Promise<void>;
-  setActiveForLockScreen: (
-    active: boolean,
-    metadata?: { title: string; artist: string }
-  ) => Promise<void>;
   setCallbacks: (callbacks: TrackPlayerServiceCallbacks) => void;
-  updateMetadata: (title: string, artist?: string) => Promise<void>;
 };
 
 // Web/Electron audio service using expo-audio as requested
 class ExpoAudioService implements AudioService {
   private player: AudioPlayer | null = null;
   private currentUrl: string | null = null;
+  private volume = 1;
 
   private teardownPlayer(): void {
     if (!this.player) return;
@@ -47,6 +42,7 @@ class ExpoAudioService implements AudioService {
     if (!this.player || this.currentUrl !== url) {
       this.teardownPlayer();
       this.player = createAudioPlayer(url);
+      this.player.volume = this.volume;
       this.currentUrl = url;
     }
     if (!this.player) {
@@ -86,37 +82,26 @@ class ExpoAudioService implements AudioService {
   }
 
   async setVolume(volume: number): Promise<void> {
+    this.volume = Math.max(0, Math.min(1, volume));
     const player = this.player;
 
     if (player) {
       try {
-        player.volume = volume;
+        player.volume = this.volume;
       } catch (error) {
         console.error('ExpoAudioService setVolume failed:', error);
       }
     }
   }
 
-  async setActiveForLockScreen(
-    _active: boolean,
-    _metadata?: { title: string; artist: string }
-  ): Promise<void> {
-    // Not supported on web
-  }
+  setCallbacks(_callbacks: TrackPlayerServiceCallbacks): void {}
 
-  setCallbacks(_callbacks: TrackPlayerServiceCallbacks): void {
-    // Not needed on web
-  }
-
-  async updateMetadata(_title: string, _artist?: string): Promise<void> {
-    // Not supported on web
-  }
 }
 
 // Mobile audio service using react-native-track-player for proper background playback
 class TrackPlayerAudioService implements AudioService {
   private isInitialized = false;
-  private currentStationName: string | null = null;
+  private volume = 1;
 
   async play(url: string, stationName: string): Promise<void> {
     try {
@@ -127,8 +112,9 @@ class TrackPlayerAudioService implements AudioService {
       if (!this.isInitialized) {
         throw new Error('TrackPlayer not initialized');
       }
-      this.currentStationName = stationName;
+      await setTrackPlayerVolume(this.volume);
       await playStream(url, stationName, 'Radiolla');
+      await setTrackPlayerVolume(this.volume);
     } catch (error) {
       console.error('TrackPlayerAudioService play failed:', error);
       throw error;
@@ -138,27 +124,17 @@ class TrackPlayerAudioService implements AudioService {
   async stop(): Promise<void> {
     try {
       await stopStream();
-      this.currentStationName = null;
     } catch (error) {
       console.error('TrackPlayerAudioService stop failed:', error);
     }
   }
 
   async setVolume(volume: number): Promise<void> {
+    this.volume = Math.max(0, Math.min(1, volume));
     try {
-      await setTrackPlayerVolume(volume);
+      await setTrackPlayerVolume(this.volume);
     } catch (error) {
       console.error('TrackPlayerAudioService setVolume failed:', error);
-    }
-  }
-
-  async setActiveForLockScreen(
-    _active: boolean,
-    metadata?: { title: string; artist: string }
-  ): Promise<void> {
-    // TrackPlayer handles this automatically, but we can update metadata
-    if (metadata) {
-      await this.updateMetadata(metadata.title, metadata.artist);
     }
   }
 
@@ -166,16 +142,6 @@ class TrackPlayerAudioService implements AudioService {
     setTrackPlayerCallbacks(callbacks);
   }
 
-  async updateMetadata(
-    title: string,
-    artist: string = 'Radiolla'
-  ): Promise<void> {
-    try {
-      await updateTrackMetadata(title, artist);
-    } catch (error) {
-      console.error('TrackPlayerAudioService updateMetadata failed:', error);
-    }
-  }
 }
 
 let sharedService: AudioService | null = null;
@@ -197,10 +163,8 @@ export async function initializeAudioMode(): Promise<void> {
     await setAudioModeAsync({
       playsInSilentMode: true,
       shouldPlayInBackground: true,
-      interruptionMode: 'duckOthers',
-      interruptionModeAndroid: 'duckOthers',
     });
-  } catch (error) {
+  } catch {
     // Ignore audio mode errors
   }
 

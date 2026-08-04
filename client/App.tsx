@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { StatusBar } from 'expo-status-bar';
 import {
   useFonts,
@@ -71,7 +71,10 @@ function AppContent() {
 
   // Drag and drop state
   const [draggedStationId, setDraggedStationId] = useState<string | null>(null);
-  const [draggedOverIndex, setDraggedOverIndex] = useState<number | null>(null);
+  const [draggedOverStationId, setDraggedOverStationId] = useState<
+    string | null
+  >(null);
+  const draggedOverStationIdRef = useRef<string | null>(null);
 
   const filteredStations = useMemo(() => {
     let result = stations;
@@ -171,8 +174,8 @@ function AppContent() {
       for (const el of elements) {
         const stationId = (el as any).dataset?.stationId;
         if (stationId) {
-          const index = stations.findIndex(s => s.id === stationId);
-          if (index >= 0) setDraggedOverIndex(index);
+          draggedOverStationIdRef.current = stationId;
+          setDraggedOverStationId(stationId);
           break;
         }
       }
@@ -216,7 +219,7 @@ function AppContent() {
     setContextStationId(null);
     if (
       currentStation?.id === station.id &&
-      (playbackState === 'playing' || playbackState === 'loading')
+      playbackState !== 'idle'
     ) {
       stopPlayback();
     } else {
@@ -225,19 +228,27 @@ function AppContent() {
   };
 
   const handleStationLongPress = (station: Station) => {
-    setDraggedStationId(station.id);
-    setContextStationId(null);
+    if (Platform.OS === 'web') {
+      draggedOverStationIdRef.current = null;
+      setDraggedStationId(station.id);
+      setContextStationId(null);
+    } else {
+      setContextStationId(station.id);
+    }
   };
 
   const handleStationDragEnd = () => {
-    if (draggedStationId && draggedOverIndex !== null) {
+    const targetStationId = draggedOverStationIdRef.current;
+    if (draggedStationId && targetStationId) {
       const fromIndex = stations.findIndex(s => s.id === draggedStationId);
-      if (fromIndex !== draggedOverIndex) {
-        reorderStations(fromIndex, draggedOverIndex);
+      const toIndex = stations.findIndex(s => s.id === targetStationId);
+      if (fromIndex !== toIndex) {
+        reorderStations(fromIndex, toIndex);
       }
     }
+    draggedOverStationIdRef.current = null;
     setDraggedStationId(null);
-    setDraggedOverIndex(null);
+    setDraggedOverStationId(null);
   };
 
   const handleRemoveStation = async (id: string) => {
@@ -248,6 +259,20 @@ function AppContent() {
 
   const handleToggleFavorite = async (id: string) => {
     await toggleFavorite(id);
+  };
+
+  const handleMoveUp = (id: string) => {
+    const index = stations.findIndex(s => s.id === id);
+    if (index > 0) {
+      reorderStations(index, index - 1);
+    }
+  };
+
+  const handleMoveDown = (id: string) => {
+    const index = stations.findIndex(s => s.id === id);
+    if (index !== -1 && index < stations.length - 1) {
+      reorderStations(index, index + 1);
+    }
   };
 
   // Modal handlers
@@ -339,12 +364,13 @@ function AppContent() {
               showsVerticalScrollIndicator={false}
               scrollEnabled={!draggedStationId}
             >
-              {filteredStations.map((station, index) => {
-                const isCurrent = currentStation?.id === station.id;
-                const playing = isCurrent && playbackState === 'playing';
-                const highlighted =
-                  isCurrent &&
-                  (playbackState === 'playing' || playbackState === 'loading');
+              {filteredStations.map(station => {
+                const active =
+                  currentStation?.id === station.id &&
+                  (playbackState === 'playing' ||
+                    playbackState === 'loading');
+                const playing = active;
+                const highlighted = active;
 
                 return (
                   <StationCard
@@ -353,7 +379,7 @@ function AppContent() {
                     isPlaying={playing}
                     isHighlighted={highlighted}
                     isDragging={draggedStationId === station.id}
-                    isDraggedOver={draggedOverIndex === index}
+                    isDraggedOver={draggedOverStationId === station.id}
                     showActions={contextStationId === station.id}
                     onPress={() => handleStationPress(station)}
                     onLongPress={() => handleStationLongPress(station)}
@@ -364,6 +390,8 @@ function AppContent() {
                     }
                     onEdit={() => openEditModal(station)}
                     onRemove={() => handleRemoveStation(station.id)}
+                    onMoveUp={() => handleMoveUp(station.id)}
+                    onMoveDown={() => handleMoveDown(station.id)}
                     onCloseMenu={() => setContextStationId(null)}
                     onToggleFavorite={() => handleToggleFavorite(station.id)}
                   />
