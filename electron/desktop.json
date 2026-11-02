@@ -1,0 +1,14 @@
+{
+  "name": "Radiolla",
+  "appId": "com.absolutefreakout.radiolla",
+  "main": "main.js",
+  "runtimeFiles": [
+    "main.js",
+    "preload.js",
+    "loading.html"
+  ],
+  "copyAssets": true,
+  "port": 38687,
+  "width": 1100,
+  "height": 760
+}

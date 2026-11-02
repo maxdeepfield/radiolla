@@ -3,7 +3,6 @@ import { Palette, fonts } from './theme';
 
 export const createStyles = (palette: Palette, compactUI: boolean = false) => {
   const cardPadding = compactUI ? 6 : 8;
-  const cardMargin = compactUI ? 8 : 12;
   const fontSize = {
     title: compactUI ? 13 : 14,
     subtitle: compactUI ? 9 : 10,
@@ -54,12 +53,9 @@ export const createStyles = (palette: Palette, compactUI: boolean = false) => {
     card: {
       backgroundColor: palette.surface,
       borderColor: palette.border,
-      borderRadius: 4,
-      borderStyle: 'dashed',
-      borderWidth: 1,
-      marginBottom: cardMargin,
+      borderBottomWidth: 1,
       paddingBottom: cardPadding,
-      paddingHorizontal: cardPadding,
+      paddingHorizontal: compactUI ? 10 : 14,
       paddingTop: cardPadding + 2,
     },
     cardMain: {
@@ -175,7 +171,6 @@ export const createStyles = (palette: Palette, compactUI: boolean = false) => {
     draggedOverCard: {
       borderTopColor: palette.accentStrong,
       borderTopWidth: 2,
-      marginTop: 8,
     },
     draggingCard: {
       backgroundColor: palette.neutral,
@@ -266,8 +261,6 @@ export const createStyles = (palette: Palette, compactUI: boolean = false) => {
     },
     inner: {
       flex: 1,
-      paddingHorizontal: compactUI ? 8 : 12,
-      paddingTop: compactUI ? 8 : 12,
     },
     input: {
       backgroundColor: palette.background,
@@ -306,7 +299,7 @@ export const createStyles = (palette: Palette, compactUI: boolean = false) => {
       borderColor: palette.accentStrong,
     },
     list: {
-      paddingTop: 2,
+      paddingTop: 0,
     },
     listContent: {
       paddingBottom: 16,
@@ -551,6 +544,42 @@ export const createStyles = (palette: Palette, compactUI: boolean = false) => {
       fontFamily: fonts.medium,
       fontSize: 12,
     },
+    seekFill: {
+      backgroundColor: palette.accentStrong,
+      bottom: 0,
+      left: 0,
+      position: 'absolute',
+      top: 0,
+    },
+    seekRow: {
+      alignItems: 'center',
+      flexDirection: 'row',
+      gap: 6,
+      marginTop: 5,
+    },
+    seekThumb: {
+      backgroundColor: palette.accentStrong,
+      borderRadius: 5,
+      height: 10,
+      marginLeft: -5,
+      marginTop: -3,
+      position: 'absolute',
+      top: '50%',
+      width: 10,
+    },
+    seekTime: {
+      color: palette.textSecondary,
+      fontFamily: fonts.medium,
+      fontSize: 10,
+      minWidth: 28,
+    },
+    seekTrack: {
+      backgroundColor: palette.border,
+      borderRadius: 2,
+      flex: 1,
+      height: 4,
+      position: 'relative',
+    },
     searchIcon: {
       color: palette.textPrimary,
       fontFamily: fonts.bold,
@@ -681,12 +710,17 @@ export const createStyles = (palette: Palette, compactUI: boolean = false) => {
       justifyContent: 'center',
       width: compactUI ? 40 : 46,
     },
-    volumeFillVertical: {
+    volumeContainerHorizontal: {
+      alignItems: 'center',
+      justifyContent: 'center',
+      width: '100%',
+    },
+    volumeFillHorizontal: {
       backgroundColor: palette.accentStrong,
       bottom: 0,
       left: 0,
       position: 'absolute',
-      right: 0,
+      top: 0,
     },
     volumeIcon: {
       fontSize: compactUI ? 18 : 20,
@@ -716,6 +750,24 @@ export const createStyles = (palette: Palette, compactUI: boolean = false) => {
       position: 'absolute',
       right: -4,
       transform: [{ translateY: 8 }],
+    },
+    volumeThumbHorizontal: {
+      backgroundColor: palette.surface,
+      borderColor: palette.borderStrong,
+      borderRadius: 8,
+      borderWidth: 2,
+      height: 16,
+      marginLeft: -8,
+      position: 'absolute',
+      top: -6,
+      width: 16,
+    },
+    volumeTrackHorizontal: {
+      backgroundColor: palette.border,
+      borderRadius: 4,
+      height: 4,
+      position: 'relative',
+      width: '100%',
     },
     volumeTrackVertical: {
       backgroundColor: palette.background,

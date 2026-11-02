@@ -101,12 +101,25 @@ The app uses Expo-managed modules included in Expo Go (expo-av, expo-notificatio
 
 ## Building and Deployment
 
+### Electron CLI
+
+Radiolla uses the private [Expo Electron CLI](https://github.com/maxdeepfield/expo-electron) to start its existing Electron main process and create Windows builds. After authenticating GitHub on this computer, run:
+
+```powershell
+npm run electron:prepare
+npm run electron
+npm run build:win
+npm run build:win:installer
+```
+
+`electron:prepare` adopts the existing Radiolla Electron main process, tray, audio IPC, preload, assets and file associations. It needs Node.js 22.12 or newer. On another computer, configure GitHub access with `gh auth login` and `gh auth setup-git` before running `npm install`.
+
 ### Web Bundle Export
 
 Outputs to `dist/` (consumed by Electron):
 
 ```bash
-npm run web:export
+npm run build:web
 ```
 
 ### Electron Packaging
@@ -114,7 +127,7 @@ npm run web:export
 Bundles the web export and runs Electron in production mode:
 
 ```bash
-npm run electron:pack
+npm run build:win
 ```
 
 ### Electron Installer (Windows)
@@ -122,7 +135,7 @@ npm run electron:pack
 Builds the NSIS installer into `release/`:
 
 ```bash
-npm run electron:build
+npm run build:win:installer
 ```
 
 ### Local Android APK

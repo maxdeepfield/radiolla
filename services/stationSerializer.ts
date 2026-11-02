@@ -63,6 +63,7 @@ export function deserialize(json: string): DeserializeResult {
       id: s.id as string,
       name: s.name as string,
       url: s.url as string,
+      type: s.type === 'file' ? 'file' : 'stream',
       favorite: typeof s.favorite === 'boolean' ? s.favorite : false,
     }));
   } catch {

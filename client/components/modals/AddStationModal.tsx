@@ -40,7 +40,10 @@ export function AddStationModal({
       setFormError('Name and stream URL are required.');
       return;
     }
-    if (!/^https?:\/\//i.test(urlInput.trim())) {
+    if (
+      editingStation?.type !== 'file' &&
+      !/^https?:\/\//i.test(urlInput.trim())
+    ) {
       setFormError('Stream URL should start with http or https.');
       return;
     }
@@ -74,7 +77,9 @@ export function AddStationModal({
             placeholderTextColor="#94a3b8"
           />
           <TextInput
-            placeholder="Stream URL"
+            placeholder={
+              editingStation?.type === 'file' ? 'Audio file path' : 'Stream URL'
+            }
             value={urlInput}
             onChangeText={setUrlInput}
             style={styles.input}
