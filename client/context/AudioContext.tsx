@@ -361,11 +361,10 @@ export function AudioProvider({
     volumeChangedRef.current = true;
     volumeRef.current = clamped;
     setVolumeState(clamped);
-    savePlaybackVolume(clamped).catch(() => undefined);
     const audioService = audioServiceRef.current;
     if (audioService) {
       try {
-        await audioService.setVolume(clamped);
+        audioService.setVolume(clamped);
       } catch {
         // ignore volume change errors
       }

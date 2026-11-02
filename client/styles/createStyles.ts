@@ -710,12 +710,17 @@ export const createStyles = (palette: Palette, compactUI: boolean = false) => {
       justifyContent: 'center',
       width: compactUI ? 40 : 46,
     },
-    volumeFillVertical: {
+    volumeContainerHorizontal: {
+      alignItems: 'center',
+      justifyContent: 'center',
+      width: '100%',
+    },
+    volumeFillHorizontal: {
       backgroundColor: palette.accentStrong,
       bottom: 0,
       left: 0,
       position: 'absolute',
-      right: 0,
+      top: 0,
     },
     volumeIcon: {
       fontSize: compactUI ? 18 : 20,
@@ -745,6 +750,24 @@ export const createStyles = (palette: Palette, compactUI: boolean = false) => {
       position: 'absolute',
       right: -4,
       transform: [{ translateY: 8 }],
+    },
+    volumeThumbHorizontal: {
+      backgroundColor: palette.surface,
+      borderColor: palette.borderStrong,
+      borderRadius: 8,
+      borderWidth: 2,
+      height: 16,
+      marginLeft: -8,
+      position: 'absolute',
+      top: -6,
+      width: 16,
+    },
+    volumeTrackHorizontal: {
+      backgroundColor: palette.border,
+      borderRadius: 4,
+      height: 4,
+      position: 'relative',
+      width: '100%',
     },
     volumeTrackVertical: {
       backgroundColor: palette.background,

@@ -462,11 +462,7 @@ function AppContent() {
             </ScrollView>
           </KeyboardAvoidingView>
 
-          <PlayerBar
-            showVolumeSlider={showVolumeSlider}
-            onVolumeToggle={() => setShowVolumeSlider(prev => !prev)}
-            bottomInset={bottomInset}
-          />
+          <PlayerBar bottomInset={bottomInset} />
         </View>
       </View>
 

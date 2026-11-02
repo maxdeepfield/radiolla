@@ -78,12 +78,14 @@ export function AboutModal({ visible, onClose }: AboutModalProps) {
               <Text style={styles.linkHint}>{AF_URL}</Text>
             </Pressable>
           </View>
-          <TouchableOpacity
-            style={[styles.button, styles.primaryButton]}
-            onPress={onClose}
-          >
-            <Text style={styles.buttonLabel}>Close</Text>
-          </TouchableOpacity>
+          <View style={styles.modalActions}>
+            <TouchableOpacity
+              style={[styles.button, styles.primaryButton]}
+              onPress={onClose}
+            >
+              <Text style={styles.buttonLabel}>Close</Text>
+            </TouchableOpacity>
+          </View>
         </View>
       </View>
     </Modal>

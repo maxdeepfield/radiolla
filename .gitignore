@@ -66,3 +66,7 @@ electron/dist/
 # Miscellaneous
 crash_full.txt
 *Zone.Identifier
+
+# Expo Electron artifacts
+.electron-app/
+desktop-dist/

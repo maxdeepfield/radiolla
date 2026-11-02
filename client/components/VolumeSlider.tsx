@@ -2,8 +2,6 @@ import React from 'react';
 import { View } from 'react-native';
 import { useSettings } from '../context/SettingsContext';
 
-const VOLUME_TRACK_HEIGHT = 160;
-
 type VolumeSliderProps = {
   volume: number;
   onVolumeChange: (volume: number) => void;
@@ -11,27 +9,32 @@ type VolumeSliderProps = {
 
 export function VolumeSlider({ volume, onVolumeChange }: VolumeSliderProps) {
   const { styles } = useSettings();
+  const trackWidthRef = React.useRef(80);
 
   const handleVolumeGesture = (event: any) => {
-    const { locationY } = event.nativeEvent;
-    const normalized = 1 - locationY / VOLUME_TRACK_HEIGHT;
+    const { locationX } = event.nativeEvent;
+    const trackWidth = trackWidthRef.current || 80;
+    const normalized = locationX / trackWidth;
     const clamped = Math.max(0, Math.min(1, normalized));
     onVolumeChange(clamped);
   };
 
   return (
-    <View style={styles.volumePopover}>
+    <View style={styles.volumeContainerHorizontal}>
       <View
-        style={styles.volumeTrackVertical}
+        style={styles.volumeTrackHorizontal}
+        onLayout={(e) => {
+          trackWidthRef.current = e.nativeEvent.layout.width;
+        }}
         onStartShouldSetResponder={() => true}
         onResponderGrant={handleVolumeGesture}
         onResponderMove={handleVolumeGesture}
         onResponderRelease={handleVolumeGesture}
       >
         <View
-          style={[styles.volumeFillVertical, { height: `${volume * 100}%` }]}
+          style={[styles.volumeFillHorizontal, { width: `${volume * 100}%` }]}
         />
-        <View style={[styles.volumeThumb, { bottom: `${volume * 100}%` }]} />
+        <View style={[styles.volumeThumbHorizontal, { left: `${volume * 100}%` }]} />
       </View>
     </View>
   );
