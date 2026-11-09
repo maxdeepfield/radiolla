@@ -3,6 +3,7 @@ import TrackPlayer, {
   State,
   RepeatMode,
   PlaybackState,
+  Capability,
 } from 'react-native-track-player';
 import { Platform } from 'react-native';
 
@@ -35,7 +36,43 @@ export function setTrackPlayerCallbacks(
   serviceCallbacks = callbacks;
 }
 
-export async function PlaybackService(): Promise<void> {}
+export type RemoteHandlers = {
+  onPlay?: () => void;
+  onPause?: () => void;
+  onStop?: () => void;
+  onNext?: () => void;
+  onPrevious?: () => void;
+};
+
+let remoteHandlers: RemoteHandlers = {};
+
+export function setRemoteHandlers(handlers: RemoteHandlers) {
+  remoteHandlers = handlers;
+}
+
+export async function PlaybackService(): Promise<void> {
+  TrackPlayer.addEventListener(Event.RemotePlay, () => {
+    remoteHandlers.onPlay?.();
+    TrackPlayer.play().catch(() => undefined);
+  });
+  TrackPlayer.addEventListener(Event.RemotePause, () => {
+    remoteHandlers.onPause?.();
+    TrackPlayer.pause().catch(() => undefined);
+  });
+  TrackPlayer.addEventListener(Event.RemoteStop, () => {
+    remoteHandlers.onStop?.();
+    TrackPlayer.stop().then(() => TrackPlayer.reset()).catch(() => undefined);
+  });
+  TrackPlayer.addEventListener(Event.RemoteNext, () => {
+    remoteHandlers.onNext?.();
+  });
+  TrackPlayer.addEventListener(Event.RemotePrevious, () => {
+    remoteHandlers.onPrevious?.();
+  });
+  TrackPlayer.addEventListener(Event.RemoteDuck, () => {
+    TrackPlayer.pause().catch(() => undefined);
+  });
+}
 
 let isSetup = false;
 
@@ -142,6 +179,20 @@ export async function setupTrackPlayer(): Promise<void> {
     await TrackPlayer.setupPlayer({});
 
     await TrackPlayer.setRepeatMode(RepeatMode.Off);
+    await TrackPlayer.updateOptions({
+      capabilities: [
+        Capability.Play,
+        Capability.Stop,
+        Capability.SkipToNext,
+        Capability.SkipToPrevious,
+      ],
+      notificationCapabilities: [
+        Capability.Play,
+        Capability.Stop,
+        Capability.SkipToNext,
+        Capability.SkipToPrevious,
+      ],
+    });
     registerMetadataListeners();
     registerPlaybackListeners();
     isSetup = true;

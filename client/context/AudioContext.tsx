@@ -26,6 +26,7 @@ import {
   saveStationLibrary,
 } from '../../services/playbackPreferences';
 import { useSettings } from './SettingsContext';
+import { setRemoteHandlers } from '../../services/trackPlayerService';
 import { prepareLocalAudioUrl } from '../../services/localAudioFiles';
 
 export type Station = {
@@ -437,6 +438,41 @@ export function AudioProvider({
             } else {
               setPlaybackStateSynced('idle');
             }
+          },
+        });
+
+        setRemoteHandlers({
+          onPlay: () => {
+            const target = currentStationRef.current;
+            if (target) playStationRef.current(target);
+          },
+          onPause: () => {
+            audioServiceRef.current?.pause().then(() => {
+              setPlaybackStateSynced('paused');
+            });
+          },
+          onStop: () => {
+            stopPlayback();
+          },
+          onNext: () => {
+            const active = currentStationRef.current;
+            const list = stationsRef.current;
+            if (!list.length) return;
+            const idx = active
+              ? list.findIndex(s => s.id === active.id)
+              : -1;
+            const next = list[(idx + 1 + list.length) % list.length];
+            if (next) playStationRef.current(next);
+          },
+          onPrevious: () => {
+            const active = currentStationRef.current;
+            const list = stationsRef.current;
+            if (!list.length) return;
+            const idx = active
+              ? list.findIndex(s => s.id === active.id)
+              : 0;
+            const prev = list[(idx - 1 + list.length) % list.length];
+            if (prev) playStationRef.current(prev);
           },
         });
       } catch (e) {
